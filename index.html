@@ -273,7 +273,7 @@
   const fmt = (n, d = 2) => n == null ? '—' : Number(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
 
   // ---------- state ----------
-  const DEFAULTS = ['NVDA', 'D05.SI'];
+  const DEFAULTS = ['NVDA', 'D05.SI', 'O39.SI', 'U11.SI', 'BSY'];
   let watchlist = DEFAULTS.slice();
   try {
     const saved = JSON.parse(localStorage.getItem('ls_watchlist') || 'null');
