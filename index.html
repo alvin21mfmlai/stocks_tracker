@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live Stocks</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb;
+    --page: #f9f9f7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --grid: #e1e0d9;
+    --baseline: #c3c2b7;
+    --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6;
+    --delta-up: #006300;
+    --delta-down: #d03b3b;
+    --status-good: #0ca30c;
+    --status-critical: #d03b3b;
+    --wash: rgba(11,11,11,0.045);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface-1: #1a1a19;
+      --page: #0d0d0d;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --grid: #2c2c2a;
+      --baseline: #383835;
+      --border: rgba(255,255,255,0.10);
+      --series-1: #3987e5;
+      --delta-up: #0ca30c;
+      --delta-down: #d03b3b;
+      --wash: rgba(255,255,255,0.06);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1: #1a1a19;
+    --page: #0d0d0d;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --grid: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5;
+    --delta-up: #0ca30c;
+    --delta-down: #d03b3b;
+    --wash: rgba(255,255,255,0.06);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page);
+    color: var(--text-primary);
+    min-height: 100vh;
+  }
+  .app { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; }
+
+  header { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+  header h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+  header .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background: var(--status-good); margin-right: 8px; vertical-align: 1px; }
+  .spacer { flex: 1; }
+
+  .searchbox { position: relative; width: 280px; }
+  .searchbox input {
+    width: 100%; padding: 8px 12px; font-size: 14px; font-family: inherit;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface-1); color: var(--text-primary); outline: none;
+  }
+  .searchbox input:focus { border-color: var(--series-1); }
+  .search-results {
+    position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 30;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12); overflow: hidden; display: none;
+  }
+  .search-results.open { display: block; }
+  .search-results button {
+    display: flex; width: 100%; gap: 8px; align-items: baseline; text-align: left;
+    padding: 8px 12px; border: 0; background: none; cursor: pointer;
+    font-family: inherit; font-size: 13px; color: var(--text-primary);
+  }
+  .search-results button:hover { background: var(--wash); }
+  .search-results .sym { font-weight: 700; }
+  .search-results .nm { color: var(--text-secondary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .search-results .ex { color: var(--text-muted); font-size: 11px; }
+
+  .theme-btn {
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+    border-radius: 8px; padding: 7px 12px; font-size: 13px; cursor: pointer; font-family: inherit;
+  }
+  .theme-btn:hover { background: var(--wash); }
+
+  .layout { display: grid; grid-template-columns: 1fr 320px; gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px;
+  }
+
+  /* ---- chart card ---- */
+  .quote-head { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  .quote-head .names h2 { font-size: 16px; font-weight: 700; }
+  .quote-head .names .sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .quote-price { margin-left: auto; text-align: right; }
+  .quote-price .px { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
+  .quote-price .chg { font-size: 13px; font-weight: 600; }
+  .chg.up { color: var(--delta-up); }
+  .chg.down { color: var(--delta-down); }
+  .chg.flat { color: var(--text-secondary); }
+
+  .ranges { display: flex; gap: 4px; margin: 14px 0 4px; }
+  .ranges button {
+    border: 0; background: none; color: var(--text-secondary); font-family: inherit;
+    font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 6px; cursor: pointer;
+  }
+  .ranges button:hover { background: var(--wash); }
+  .ranges button.active { background: var(--wash); color: var(--text-primary); }
+
+  .chart-wrap { position: relative; }
+  .chart-wrap svg { display: block; width: 100%; }
+  .tooltip {
+    position: absolute; pointer-events: none; z-index: 20; display: none;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.14);
+    white-space: nowrap;
+  }
+  .tooltip .tt-t { color: var(--text-muted); font-size: 11px; }
+  .tooltip .tt-v { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .chart-msg { padding: 60px 0; text-align: center; color: var(--text-muted); font-size: 13px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-top: 14px; }
+  .tile { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .tile .k { font-size: 11px; color: var(--text-muted); }
+  .tile .v { font-size: 14px; font-weight: 600; margin-top: 3px; font-variant-numeric: tabular-nums; }
+
+  /* ---- watchlist ---- */
+  .side h3 { font-size: 13px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px; }
+  .wl-item {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+    background: none; cursor: pointer; font-family: inherit; text-align: left;
+    margin-bottom: 8px; color: var(--text-primary);
+  }
+  .wl-item:hover { background: var(--wash); }
+  .wl-item.active { border-color: var(--series-1); }
+  .wl-item .wsym { font-weight: 700; font-size: 13px; }
+  .wl-item .wname { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
+  .wl-item .wpx { margin-left: auto; text-align: right; }
+  .wl-item .wpx .p { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .wl-item .wpx .c { font-size: 11px; font-weight: 600; }
+  .wl-item .rm {
+    border: 0; background: none; color: var(--text-muted); cursor: pointer;
+    font-size: 14px; padding: 2px 4px; border-radius: 4px; line-height: 1;
+  }
+  .wl-item .rm:hover { color: var(--delta-down); background: var(--wash); }
+
+  /* ---- forecast ---- */
+  .fc-btn {
+    width: 100%; padding: 10px 14px; border: 0; border-radius: 8px; cursor: pointer;
+    background: var(--series-1); color: #fff; font-family: inherit; font-size: 14px; font-weight: 600;
+  }
+  .fc-btn:hover { filter: brightness(1.07); }
+  .fc-btn:disabled { opacity: 0.55; cursor: default; }
+  .fc-note { font-size: 11px; color: var(--text-muted); margin-top: 8px; line-height: 1.5; }
+  .fc-result { margin-top: 14px; font-size: 13px; line-height: 1.55; }
+  .fc-badges { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border);
+  }
+  .badge.bullish { color: var(--delta-up); }
+  .badge.bearish { color: var(--delta-down); }
+  .badge.neutral { color: var(--text-secondary); }
+  .badge.conf { color: var(--text-secondary); font-weight: 600; }
+  .fc-result h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin: 12px 0 5px; }
+  .fc-result ul { padding-left: 18px; }
+  .fc-result li { margin-bottom: 4px; }
+  .fc-levels { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .err-banner {
+    background: color-mix(in srgb, var(--status-critical) 10%, var(--surface-1));
+    border: 1px solid var(--status-critical); color: var(--text-primary);
+    border-radius: 8px; padding: 8px 12px; font-size: 12px; margin-bottom: 12px; display: none;
+  }
+  .err-banner.show { display: block; }
+  .skel { color: var(--text-muted); font-size: 13px; padding: 8px 0; }
+  footer { margin-top: 24px; font-size: 11px; color: var(--text-muted); line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1><span class="dot" aria-hidden="true"></span>Live Stocks</h1>
+    <div class="spacer"></div>
+    <div class="searchbox">
+      <input id="search" type="text" placeholder="Search ticker or company…" autocomplete="off" aria-label="Search stocks">
+      <div id="searchResults" class="search-results" role="listbox"></div>
+    </div>
+    <button id="themeBtn" class="theme-btn" aria-label="Toggle dark mode">◐ Theme</button>
+  </header>
+
+  <div id="errBanner" class="err-banner" role="alert"></div>
+
+  <div class="layout">
+    <div>
+      <div class="card">
+        <div class="quote-head">
+          <div class="names">
+            <h2 id="qName">—</h2>
+            <div class="sub" id="qSub">&nbsp;</div>
+          </div>
+          <div class="quote-price">
+            <div class="px" id="qPx">—</div>
+            <div class="chg flat" id="qChg">&nbsp;</div>
+          </div>
+        </div>
+        <div class="ranges" id="ranges" role="tablist"></div>
+        <div class="chart-wrap">
+          <div id="chart"></div>
+          <div id="tooltip" class="tooltip"></div>
+        </div>
+        <div class="tiles" id="tiles"></div>
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="card" style="margin-bottom:16px">
+        <h3>Watchlist</h3>
+        <div id="watchlist"></div>
+      </div>
+      <div class="card">
+        <h3>AI Forecast</h3>
+        <button id="fcBtn" class="fc-btn">Generate forecast</button>
+        <div id="fcResult" class="fc-result"></div>
+        <div class="fc-note">Powered by NVIDIA Nemotron. AI-generated analysis of recent price action — not financial advice.</div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Market data via Yahoo Finance (may be delayed). Forecasts are AI-generated commentary for information only, not investment advice.
+  </footer>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n, d = 2) => n == null ? '—' : Number(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+
+  // ---------- state ----------
+  const DEFAULTS = ['NVDA', 'D05.SI'];
+  let watchlist = DEFAULTS.slice();
+  try {
+    const saved = JSON.parse(localStorage.getItem('ls_watchlist') || 'null');
+    if (Array.isArray(saved) && saved.length) watchlist = saved;
+  } catch {}
+  let selected = watchlist[0];
+  let range = '1d';
+  let chartData = null;
+  const quoteCache = {};   // symbol -> latest stock payload (1d)
+  const RANGES = [['1d','1D'],['5d','5D'],['1mo','1M'],['6mo','6M'],['1y','1Y'],['5y','5Y']];
+
+  const saveWl = () => { try { localStorage.setItem('ls_watchlist', JSON.stringify(watchlist)); } catch {} };
+
+  // ---------- theme ----------
+  $('themeBtn').addEventListener('click', () => {
+    const cur = document.documentElement.dataset.theme;
+    const sysDark = matchMedia('(prefers-color-scheme: dark)').matches;
+    const isDark = cur ? cur === 'dark' : sysDark;
+    document.documentElement.dataset.theme = isDark ? 'light' : 'dark';
+    if (chartData) renderChart(chartData);
+  });
+
+  // ---------- api ----------
+  async function api(path) {
+    const r = await fetch(path);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
+    return j;
+  }
+  function showErr(msg) {
+    const b = $('errBanner');
+    b.textContent = msg; b.classList.add('show');
+    clearTimeout(showErr._t);
+    showErr._t = setTimeout(() => b.classList.remove('show'), 8000);
+  }
+
+  // ---------- quote header + tiles ----------
+  function renderQuote(d) {
+    $('qName').textContent = `${d.name} (${d.symbol})`;
+    $('qSub').textContent = [d.exchange, d.currency, d.marketState === 'REGULAR' ? 'Market open' : d.marketState ? 'Market closed' : ''].filter(Boolean).join(' · ');
+    $('qPx').textContent = fmt(d.price);
+    const base = d.range === '1d' ? d.prevClose : (d.points[0] && d.points[0].c);
+    const chg = (d.price != null && base) ? d.price - base : null;
+    const pc = chg != null ? (chg / base) * 100 : null;
+    const el = $('qChg');
+    if (chg == null) { el.textContent = ' '; el.className = 'chg flat'; }
+    else {
+      const sign = chg > 0 ? '▲' : chg < 0 ? '▼' : '·';
+      el.textContent = `${sign} ${fmt(Math.abs(chg))} (${fmt(Math.abs(pc))}%) ${d.range === '1d' ? 'today' : 'over ' + labelForRange(d.range)}`;
+      el.className = 'chg ' + (chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat');
+    }
+    $('tiles').innerHTML = [
+      ['Prev close', fmt(d.prevClose)],
+      ['Day range', d.dayLow != null ? `${fmt(d.dayLow)} – ${fmt(d.dayHigh)}` : '—'],
+      ['52-wk range', d.fiftyTwoWeekLow != null ? `${fmt(d.fiftyTwoWeekLow)} – ${fmt(d.fiftyTwoWeekHigh)}` : '—'],
+      ['Currency', d.currency || '—'],
+    ].map(([k, v]) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  }
+  function labelForRange(r) { return ({'1d':'today','5d':'5 days','1mo':'1 month','6mo':'6 months','1y':'1 year','5y':'5 years'})[r] || r; }
+
+  // ---------- chart (hand-rolled SVG, crosshair + tooltip) ----------
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  function renderChart(d) {
+    chartData = d;
+    const host = $('chart');
+    const pts = d.points;
+    if (!pts || pts.length < 2) { host.innerHTML = '<div class="chart-msg">No chart data for this range.</div>'; return; }
+
+    const W = host.clientWidth || 640, H = 320;
+    const pad = { l: 8, r: 56, t: 14, b: 26 };
+    const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+
+    let lo = Math.min(...pts.map(p => p.c)), hi = Math.max(...pts.map(p => p.c));
+    if (d.range === '1d' && d.prevClose != null) { lo = Math.min(lo, d.prevClose); hi = Math.max(hi, d.prevClose); }
+    const padY = (hi - lo) * 0.08 || hi * 0.01 || 1;
+    lo -= padY; hi += padY;
+
+    const t0 = pts[0].t, t1 = pts[pts.length - 1].t;
+    const x = (t) => pad.l + ((t - t0) / (t1 - t0 || 1)) * iw;
+    const y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * ih;
+
+    // y ticks
+    const nTicks = 4, ticks = [];
+    for (let i = 0; i <= nTicks; i++) ticks.push(lo + (i / nTicks) * (hi - lo));
+
+    // x labels
+    const nx = Math.min(5, pts.length);
+    const xlabs = [];
+    for (let i = 0; i < nx; i++) {
+      const p = pts[Math.round((i / (nx - 1)) * (pts.length - 1))];
+      const dt = new Date(p.t);
+      xlabs.push({ x: x(p.t), text: d.range === '1d' ? dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : d.range === '5d' ? dt.toLocaleDateString([], { weekday: 'short' })
+        : ['1y','5y'].includes(d.range) ? dt.toLocaleDateString([], { month: 'short', year: '2-digit' })
+        : dt.toLocaleDateString([], { month: 'short', day: 'numeric' }) });
+    }
+
+    const line = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.c).toFixed(1)}`).join('');
+    const area = `${line}L${x(t1).toFixed(1)},${(pad.t + ih).toFixed(1)}L${x(t0).toFixed(1)},${(pad.t + ih).toFixed(1)}Z`;
+
+    const grid = cssVar('--grid'), baseline = cssVar('--baseline'), muted = cssVar('--text-muted'), series = cssVar('--series-1');
+    let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Price chart for ${d.symbol}">`;
+    svg += `<defs><linearGradient id="ag" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${series}" stop-opacity="0.14"/><stop offset="1" stop-color="${series}" stop-opacity="0"/></linearGradient></defs>`;
+    for (const tv of ticks) {
+      const yy = y(tv).toFixed(1);
+      svg += `<line x1="${pad.l}" x2="${pad.l + iw}" y1="${yy}" y2="${yy}" stroke="${grid}" stroke-width="1"/>`;
+      svg += `<text x="${W - pad.r + 6}" y="${yy}" dy="4" font-size="11" fill="${muted}" style="font-variant-numeric:tabular-nums">${fmt(tv, tv >= 1000 ? 0 : 2)}</text>`;
+    }
+    if (d.range === '1d' && d.prevClose != null)
+      svg += `<line x1="${pad.l}" x2="${pad.l + iw}" y1="${y(d.prevClose).toFixed(1)}" y2="${y(d.prevClose).toFixed(1)}" stroke="${baseline}" stroke-width="1" stroke-dasharray="3 4"/>`;
+    svg += `<path d="${area}" fill="url(#ag)"/>`;
+    svg += `<path d="${line}" fill="none" stroke="${series}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    xlabs.forEach((xl, i) => {
+      const anchor = i === 0 ? 'start' : i === xlabs.length - 1 ? 'end' : 'middle';
+      svg += `<text x="${xl.x.toFixed(1)}" y="${H - 8}" font-size="11" fill="${muted}" text-anchor="${anchor}">${xl.text}</text>`;
+    });
+    svg += `<line id="xh" x1="0" x2="0" y1="${pad.t}" y2="${pad.t + ih}" stroke="${baseline}" stroke-width="1" visibility="hidden"/>`;
+    svg += `<circle id="xdot" r="4" fill="${series}" stroke="${cssVar('--surface-1')}" stroke-width="2" visibility="hidden"/>`;
+    svg += `<rect id="hover" x="${pad.l}" y="${pad.t}" width="${iw}" height="${ih}" fill="transparent"/>`;
+    svg += `</svg>`;
+    host.innerHTML = svg;
+
+    // hover interactions
+    const svgEl = host.querySelector('svg');
+    const xh = svgEl.querySelector('#xh'), dot = svgEl.querySelector('#xdot'), hover = svgEl.querySelector('#hover');
+    const tt = $('tooltip');
+    const move = (ev) => {
+      const rect = svgEl.getBoundingClientRect();
+      const mx = (ev.clientX - rect.left) * (W / rect.width);
+      const tAt = t0 + ((mx - pad.l) / iw) * (t1 - t0);
+      let best = 0, bd = Infinity;
+      for (let i = 0; i < pts.length; i++) { const dd = Math.abs(pts[i].t - tAt); if (dd < bd) { bd = dd; best = i; } }
+      const p = pts[best], px = x(p.t), py = y(p.c);
+      xh.setAttribute('x1', px); xh.setAttribute('x2', px); xh.setAttribute('visibility', 'visible');
+      dot.setAttribute('cx', px); dot.setAttribute('cy', py); dot.setAttribute('visibility', 'visible');
+      const dt = new Date(p.t);
+      const when = d.range === '1d' ? dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : dt.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+      tt.innerHTML = `<div class="tt-t">${when}</div><div class="tt-v">${d.currency ? d.currency + ' ' : ''}${fmt(p.c)}</div>`;
+      tt.style.display = 'block';
+      const hostRect = host.getBoundingClientRect();
+      const left = (px / W) * hostRect.width;
+      tt.style.left = Math.min(hostRect.width - tt.offsetWidth - 4, Math.max(4, left + 12)) + 'px';
+      tt.style.top = Math.max(0, (py / H) * hostRect.height - tt.offsetHeight - 12) + 'px';
+    };
+    const leave = () => { xh.setAttribute('visibility', 'hidden'); dot.setAttribute('visibility', 'hidden'); tt.style.display = 'none'; };
+    hover.addEventListener('mousemove', move);
+    hover.addEventListener('mouseleave', leave);
+  }
+
+  // ---------- ranges ----------
+  function renderRanges() {
+    $('ranges').innerHTML = RANGES.map(([v, l]) =>
+      `<button role="tab" data-r="${v}" class="${v === range ? 'active' : ''}">${l}</button>`).join('');
+  }
+  $('ranges').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    range = b.dataset.r; renderRanges(); loadSelected();
+  });
+
+  // ---------- watchlist ----------
+  function renderWatchlist() {
+    $('watchlist').innerHTML = watchlist.map((s) => {
+      const q = quoteCache[s];
+      const chg = q && q.price != null && q.prevClose ? q.price - q.prevClose : null;
+      const pc = chg != null ? (chg / q.prevClose) * 100 : null;
+      const cls = chg == null ? 'flat' : chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat';
+      const arrow = chg == null ? '' : chg > 0 ? '▲ ' : chg < 0 ? '▼ ' : '';
+      return `<button class="wl-item ${s === selected ? 'active' : ''}" data-s="${s}">
+        <span><span class="wsym">${s}</span><br><span class="wname">${q ? q.name : '…'}</span></span>
+        <span class="wpx"><span class="p">${q ? fmt(q.price) : '—'}</span><br>
+        <span class="c chg ${cls}">${chg == null ? '' : arrow + fmt(Math.abs(pc)) + '%'}</span></span>
+        <span class="rm" data-rm="${s}" title="Remove" aria-label="Remove ${s}">✕</span>
+      </button>`;
+    }).join('') || '<div class="skel">Watchlist is empty — search above to add stocks.</div>';
+  }
+  $('watchlist').addEventListener('click', (e) => {
+    const rm = e.target.closest('[data-rm]');
+    if (rm) {
+      e.stopPropagation();
+      watchlist = watchlist.filter((s) => s !== rm.dataset.rm);
+      saveWl();
+      if (selected === rm.dataset.rm) { selected = watchlist[0] || null; if (selected) loadSelected(); }
+      renderWatchlist();
+      return;
+    }
+    const item = e.target.closest('.wl-item'); if (!item) return;
+    selected = item.dataset.s; renderWatchlist(); loadSelected(); resetForecast();
+  });
+
+  async function refreshWatchlistQuotes() {
+    await Promise.all(watchlist.map(async (s) => {
+      try { quoteCache[s] = await api(`/api/stock?symbol=${encodeURIComponent(s)}&range=1d`); } catch {}
+    }));
+    renderWatchlist();
+  }
+
+  // ---------- search ----------
+  const sInput = $('search'), sBox = $('searchResults');
+  let sT;
+  sInput.addEventListener('input', () => {
+    clearTimeout(sT);
+    const q = sInput.value.trim();
+    if (!q) { sBox.classList.remove('open'); return; }
+    sT = setTimeout(async () => {
+      try {
+        const { results } = await api(`/api/search?q=${encodeURIComponent(q)}`);
+        sBox.innerHTML = results.length
+          ? results.map((r) => `<button data-sym="${r.symbol}"><span class="sym">${r.symbol}</span><span class="nm">${r.name}</span><span class="ex">${r.exchange}</span></button>`).join('')
+          : '<button disabled><span class="nm">No matches</span></button>';
+        sBox.classList.add('open');
+      } catch (e) { showErr('Search failed: ' + e.message); }
+    }, 300);
+  });
+  sBox.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-sym]'); if (!b) return;
+    const sym = b.dataset.sym;
+    if (!watchlist.includes(sym)) { watchlist.push(sym); saveWl(); }
+    selected = sym;
+    sInput.value = ''; sBox.classList.remove('open');
+    renderWatchlist(); loadSelected(); resetForecast(); refreshWatchlistQuotes();
+  });
+  document.addEventListener('click', (e) => { if (!e.target.closest('.searchbox')) sBox.classList.remove('open'); });
+
+  // ---------- forecast ----------
+  const fcBtn = $('fcBtn'), fcResult = $('fcResult');
+  function resetForecast() { fcResult.innerHTML = ''; fcBtn.disabled = false; fcBtn.textContent = 'Generate forecast'; }
+  fcBtn.addEventListener('click', async () => {
+    if (!selected) return;
+    fcBtn.disabled = true; fcBtn.textContent = 'Analyzing… (can take ~30s)';
+    fcResult.innerHTML = '<div class="skel">Nemotron is reading the last 3 months of price action…</div>';
+    try {
+      const r = await fetch('/api/forecast', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: selected }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
+      renderForecast(j);
+    } catch (e) {
+      fcResult.innerHTML = `<div class="skel">Forecast failed: ${e.message}</div>`;
+    } finally {
+      fcBtn.disabled = false; fcBtn.textContent = 'Regenerate forecast';
+    }
+  });
+  function esc(s) { return String(s).replace(/[<>&"]/g, (c) => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
+  function renderForecast(j) {
+    const f = j.forecast;
+    if (!f) { fcResult.innerHTML = `<div style="white-space:pre-wrap">${esc(j.raw || 'No forecast returned.')}</div>`; return; }
+    const icon = f.outlook === 'bullish' ? '▲' : f.outlook === 'bearish' ? '▼' : '◆';
+    let html = `<div class="fc-badges">
+      <span class="badge ${esc(f.outlook)}">${icon} ${esc((f.outlook || '').toUpperCase())}</span>
+      <span class="badge conf">confidence: ${esc(f.confidence || '—')}</span></div>`;
+    html += `<div>${esc(f.summary || '')}</div>`;
+    if (f.support != null || f.resistance != null) {
+      html += `<div class="fc-levels">
+        <div class="tile"><div class="k">Support</div><div class="v">${fmt(f.support)}</div></div>
+        <div class="tile"><div class="k">Resistance</div><div class="v">${fmt(f.resistance)}</div></div></div>`;
+    }
+    if (Array.isArray(f.drivers) && f.drivers.length)
+      html += `<h4>Drivers</h4><ul>${f.drivers.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`;
+    if (Array.isArray(f.risks) && f.risks.length)
+      html += `<h4>Risks</h4><ul>${f.risks.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`;
+    fcResult.innerHTML = html;
+  }
+
+  // ---------- load & refresh ----------
+  async function loadSelected() {
+    if (!selected) return;
+    try {
+      const d = await api(`/api/stock?symbol=${encodeURIComponent(selected)}&range=${range}`);
+      if (d.symbol !== selected && !selected.includes(d.symbol)) { /* keep whatever came back */ }
+      quoteCache[selected] = range === '1d' ? d : quoteCache[selected];
+      renderQuote(d); renderChart(d);
+    } catch (e) {
+      $('chart').innerHTML = `<div class="chart-msg">Could not load ${esc(selected)}: ${esc(e.message)}</div>`;
+      showErr(`Could not load ${selected}: ${e.message}`);
+    }
+  }
+
+  window.addEventListener('resize', () => { if (chartData) renderChart(chartData); });
+  setInterval(() => { loadSelected(); refreshWatchlistQuotes(); }, 60000);
+
+  renderRanges(); renderWatchlist();
+  loadSelected(); refreshWatchlistQuotes();
+})();
+</script>
+</body>
+</html>
