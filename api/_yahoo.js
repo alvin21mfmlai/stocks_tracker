@@ -75,11 +75,53 @@ export async function searchSymbols(q) {
     }));
 }
 
+function decodeEntities(s) {
+  return s
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&#(\d+);/g, (_, n) => String.fromCharCode(n));
+}
+
 export async function getNews(symbol, count = 8) {
+  // Primary source: Yahoo's per-ticker RSS feed — reliably scoped to the symbol
+  // (the search endpoint does fuzzy text matching and returns unrelated wire
+  // stories for tickers it can't match well, e.g. many non-US symbols).
+  try {
+    const r = await fetch(
+      `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(symbol)}&region=US&lang=en-US`,
+      { headers: { 'User-Agent': UA } }
+    );
+    if (r.ok) {
+      const xml = await r.text();
+      const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)]
+        .map((m) => {
+          const block = m[1];
+          const pick = (tag) => {
+            const mm = block.match(new RegExp(`<${tag}[^>]*>(?:\\s*<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>\\s*)?<\\/${tag}>`));
+            return mm ? mm[1].trim() : '';
+          };
+          const pub = pick('pubDate');
+          return {
+            title: decodeEntities(pick('title')),
+            publisher: decodeEntities(pick('source')) || 'Yahoo Finance',
+            link: pick('link'),
+            publishedAt: pub ? (Date.parse(pub) || null) : null,
+          };
+        })
+        .filter((n) => n.title && n.link);
+      if (items.length) {
+        return items.sort((a, b) => (b.publishedAt || 0) - (a.publishedAt || 0)).slice(0, count);
+      }
+    }
+  } catch {}
+
+  // Fallback: search endpoint, but ONLY items explicitly tagged with this
+  // ticker via relatedTickers. An empty list beats unrelated headlines.
   const j = await yahooJson(
-    `/v1/finance/search?q=${encodeURIComponent(symbol)}&quotesCount=0&newsCount=${count}&listsCount=0`
+    `/v1/finance/search?q=${encodeURIComponent(symbol)}&quotesCount=0&newsCount=${count * 3}&listsCount=0`
   );
+  const want = symbol.toUpperCase();
   return (j?.news || [])
+    .filter((n) => Array.isArray(n.relatedTickers) && n.relatedTickers.some((t) => String(t).toUpperCase() === want))
     .map((n) => ({
       title: n.title || '',
       publisher: n.publisher || '',
@@ -87,7 +129,8 @@ export async function getNews(symbol, count = 8) {
       publishedAt: n.providerPublishTime ? n.providerPublishTime * 1000 : null,
     }))
     .filter((n) => n.title)
-    .sort((a, b) => (b.publishedAt || 0) - (a.publishedAt || 0));
+    .sort((a, b) => (b.publishedAt || 0) - (a.publishedAt || 0))
+    .slice(0, count);
 }
 
 export function sendJson(res, status, body, cacheSeconds = 0) {
