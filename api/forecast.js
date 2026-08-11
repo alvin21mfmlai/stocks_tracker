@@ -3,7 +3,8 @@
 import { getChart, sendJson } from './_yahoo.js';
 
 const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
-const MODEL = process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-super-120b-a12b';
+// const MODEL = process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-super-120b-a12b';
+const MODEL = process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b';
 
 function pct(a, b) { return b ? ((a - b) / b) * 100 : 0; }
 function sma(arr, n) {
