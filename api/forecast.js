@@ -103,7 +103,7 @@ export default async function handler(req, res) {
     const stats = buildStats(data);
     const recent = data.points.slice(-30).map((p) => `${new Date(p.t).toISOString().slice(0, 10)}: ${p.c}`).join('\n');
     const newsBlock = news.length
-      ? '\nRecent news headlines (newest first):\n' + news.slice(0, 8).map((n) => {
+      ? '\nRecent news headlines (newest first):\n' + news.slice(0, 12).map((n) => {
           const age = n.publishedAt ? Math.round((Date.now() - n.publishedAt) / 36e5) : null;
           return `- [${n.publisher}${age != null ? `, ${age < 24 ? age + 'h' : Math.round(age / 24) + 'd'} ago` : ''}] ${n.title}`;
         }).join('\n') + '\n'
