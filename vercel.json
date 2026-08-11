@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/forecast.js": {
+      "maxDuration": 60
+    }
+  }
+}

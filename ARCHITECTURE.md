@@ -1,0 +1,144 @@
+# Live Stocks — code structure guide
+
+A map of the codebase for making design and code changes. Everything is plain
+JavaScript — no framework, no build step, no dependencies.
+
+## The big picture
+
+```
+Browser (index.html — everything visual)
+   │  fetch()
+   ▼
+Vercel serverless functions (api/*.js — the backend)
+   │
+   ├── Yahoo Finance  (quotes, history, search, news — free, no key)
+   └── NVIDIA API     (Nemotron forecast — key in env var NVIDIA_API_KEY)
+```
+
+The browser never talks to Yahoo or NVIDIA directly — always through your own
+`/api/*` endpoints. That's what keeps the NVIDIA key secret and avoids CORS.
+
+## File map
+
+| File | Role |
+|---|---|
+| `index.html` | The entire frontend: markup, CSS, and JS in one file |
+| `api/_yahoo.js` | Shared helpers: fetch from Yahoo (`getChart`, `searchSymbols`, `getNews`) + `sendJson` response helper. The `_` prefix means Vercel does NOT expose it as an endpoint |
+| `api/stock.js` | `GET /api/stock?symbol=&range=` → quote + price series |
+| `api/search.js` | `GET /api/search?q=` → ticker search results |
+| `api/news.js` | `GET /api/news?symbol=` → latest headlines |
+| `api/forecast.js` | `POST /api/forecast {symbol}` → stats + Nemotron AI forecast |
+| `dev-server.js` | Local-only dev server; `MOCK=1` serves synthetic data. Never runs on Vercel |
+| `package.json` | Just sets `"type": "module"` (ESM). No dependencies |
+
+## Backend (`api/`)
+
+Each endpoint file exports `default async function handler(req, res)` — Vercel's
+convention. All of them delegate the real work to `_yahoo.js` and reply through
+`sendJson(res, status, body, cacheSeconds)`, which also sets edge-cache headers
+(`s-maxage`): 15s for intraday quotes, 60s for other ranges, 10 min for news,
+1 h for search.
+
+`_yahoo.js` internals worth knowing:
+
+- `yahooJson(path)` — tries `query1.finance.yahoo.com` then `query2` as fallback.
+  The browser `User-Agent` header is required or Yahoo rejects the request.
+- `getChart(symbol, range)` — maps range → interval via the `INTERVALS` table
+  (`1d`→5m bars, `1mo`→daily, `1y`→weekly …), normalizes the response into
+  `{symbol, name, currency, price, prevClose, …, points: [{t,o,h,l,c,v}]}`.
+  This shape is the contract the frontend chart depends on.
+- `getNews(symbol)` — Yahoo's search endpoint with `newsCount`, returns
+  `[{title, publisher, link, publishedAt}]` sorted newest first.
+
+`forecast.js` is the most involved:
+
+1. Fetches 3 months of history and news in parallel (news failures are ignored).
+2. `buildStats()` computes SMA20/50, 1w/1m/3m changes, daily log-return
+   volatility, ranges — plain math, no model.
+3. Builds a prompt embedding the stats, last 30 closes, and up to 8 headlines,
+   demanding a strict JSON reply (outlook, confidence, summary,
+   support/resistance, drivers, risks, news_impact, 7 daily predictions).
+4. Calls NVIDIA: constants `NVIDIA_URL` and `MODEL` at the top of the file;
+   model overridable via env `NVIDIA_MODEL` without a code change.
+5. `extractJson()` strips `<think>` reasoning traces and code fences, then
+   parses the outermost `{…}`. `normalizePredictions()` validates the numbers,
+   clamps bands to ±30%, and assigns real weekday dates via `nextTradingDays()`.
+
+## Frontend (`index.html`)
+
+One file, three blocks: `<style>`, markup, one `<script>` IIFE.
+
+**CSS / theming.** All colors are CSS custom properties defined three times at
+the top: light defaults on `:root`, dark via `@media (prefers-color-scheme)`,
+and dark again under `:root[data-theme="dark"]` (the manual toggle). To restyle,
+change the variables — the rest of the CSS only references roles like
+`--surface-1`, `--series-1` (chart line color), `--delta-up/down`, `--wash`
+(hover tint). Layout is a CSS grid (`.layout`, chart column + 320px sidebar,
+collapsing to one column under 900px).
+
+**JS state** (top of the script): `watchlist` (persisted to localStorage key
+`ls_watchlist`; `DEFAULTS` only seed fresh browsers), `selected` (current
+symbol), `range`, `chartData` (last loaded series), `quoteCache` (per-symbol 1d
+quotes for the sidebar), `fc` + `fcHorizon` (forecast predictions and how many
+days are drawn), `FC_RANGES` (which ranges show the overlay).
+
+**JS sections**, in file order, each marked with a `// ---------- name ----------`
+comment:
+
+- `theme` — the toggle button; sets `data-theme` and re-renders the chart so SVG
+  colors update.
+- `api` — tiny `fetch` wrapper + error banner (`showErr`).
+- `quote header + tiles` — `renderQuote(d)` fills the name, price, change line,
+  and the stat tiles row.
+- `chart` — the heart of the UI. `renderChart(d)` builds the whole SVG as a
+  string: scales `x()`/`y()`, gridlines + y labels, area gradient, price line,
+  then (if `activeOverlay()` returns predictions) the forecast band, dashed
+  line, markers, and "today" divider, then the hover layer (crosshair, dot,
+  tooltip) wired to a transparent rect. Chart height, paddings, tick counts are
+  constants at the top of this function. It re-renders wholesale on resize,
+  theme change, range change — cheap because it's one innerHTML assignment.
+- `ranges` — the 1D…5Y buttons.
+- `watchlist` — `renderWatchlist()` (cards from `quoteCache`), click-to-select,
+  ✕-to-remove, `refreshWatchlistQuotes()`.
+- `search` — debounced (300ms) dropdown; picking a result adds to watchlist and
+  selects it.
+- `news` — `loadNews()` fills the news card; guards against the user switching
+  stocks mid-fetch.
+- `forecast` — button handler POSTs `/api/forecast`, `renderForecast(j)` builds
+  the panel (badges, summary, news impact, levels, drivers/risks, horizon
+  chips, predicted closes). Sets `fc` so the chart overlay appears;
+  auto-switches to the 1M range if on an intraday view.
+- `load & refresh` — `loadSelected()` is the main entry point; timers at the
+  bottom: quotes/chart every 60s, news every 5 min.
+
+Conventions: `esc()` for anything user- or API-supplied injected into HTML;
+`fmt()` for number display; rendering is "rebuild the section's innerHTML from
+state" throughout — no virtual DOM, no partial updates.
+
+## Where to change common things
+
+| Change | Where |
+|---|---|
+| Colors / dark mode | CSS variables at top of `index.html` |
+| Default watchlist | `DEFAULTS` array (state section) — only affects fresh browsers; localStorage wins |
+| Chart size, paddings, tick count | constants at top of `renderChart()` |
+| Available time ranges | `RANGES` (frontend) + `INTERVALS` (`_yahoo.js`) + `RANGES` allowlist (`api/stock.js`) |
+| Refresh cadence | `setInterval` calls at the bottom of the script |
+| Model / endpoint | top of `api/forecast.js`, or env `NVIDIA_MODEL` |
+| Forecast prompt & JSON schema | the `prompt` template in `api/forecast.js` (keep the JSON field names in sync with `renderForecast()`) |
+| Forecast horizon options | `[1, 3, 5, 7]` in `renderForecast()`; days requested is in the prompt |
+| Which ranges show the overlay | `FC_RANGES` |
+| Headline count fed to the model | `news.slice(0, 8)` in `api/forecast.js` |
+
+## Gotchas
+
+- The forecast panel and `api/forecast.js` share a contract: the JSON field
+  names in the prompt must match what `renderForecast()` reads. Change both.
+- `_`-prefixed files in `api/` are helpers; anything else becomes a public
+  endpoint automatically.
+- The watchlist you see in your own browser comes from localStorage, not
+  `DEFAULTS` — clear the `ls_watchlist` key to re-test defaults.
+- `dev-server.js` mock mode intercepts `/api/*` before the real modules, so
+  mock shapes must mirror the real API responses when you add fields.
+- Yahoo's endpoints are unofficial: no auth, but keep the User-Agent header and
+  the query1/query2 fallback, and be gentle with request rates.

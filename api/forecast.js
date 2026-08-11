@@ -103,7 +103,7 @@ export default async function handler(req, res) {
     const stats = buildStats(data);
     const recent = data.points.slice(-30).map((p) => `${new Date(p.t).toISOString().slice(0, 10)}: ${p.c}`).join('\n');
     const newsBlock = news.length
-      ? '\nRecent news headlines (newest first):\n' + news.slice(0, 12).map((n) => {
+      ? '\nRecent news headlines (newest first):\n' + news.slice(0, 8).map((n) => {
           const age = n.publishedAt ? Math.round((Date.now() - n.publishedAt) / 36e5) : null;
           return `- [${n.publisher}${age != null ? `, ${age < 24 ? age + 'h' : Math.round(age / 24) + 'd'} ago` : ''}] ${n.title}`;
         }).join('\n') + '\n'
@@ -142,22 +142,36 @@ Respond with ONLY a JSON object, no other text:
 }
 The predicted low/high band should widen with the horizon, consistent with the stock's daily volatility of ${stats.dailyVolPct}%. Keep predictions realistic — small daily moves anchored to the current price and trend.`;
 
-    const r = await fetch(NVIDIA_URL, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: MODEL,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 1.0,
-        top_p: 0.95,
-        max_tokens: 4096,
-        stream: false,
-      }),
-    });
+    // NVIDIA's free endpoint runs on shared capacity and occasionally answers
+    // 503 ResourceExhausted / 429 when the model's worker pool is full.
+    // Retry a couple of times with a short backoff before giving up.
+    let r, errText = '';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await new Promise((ok) => setTimeout(ok, attempt * 2000));
+      r = await fetch(NVIDIA_URL, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: MODEL,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 1.0,
+          top_p: 0.95,
+          max_tokens: 4096,
+          stream: false,
+        }),
+      });
+      if (r.ok) break;
+      errText = await r.text();
+      if (r.status !== 503 && r.status !== 429) break; // don't retry real errors (bad key, bad model id, …)
+    }
 
     if (!r.ok) {
-      const errText = await r.text();
-      return sendJson(res, 502, { error: `NVIDIA API ${r.status}: ${errText.slice(0, 300)}` });
+      const busy = r.status === 503 || r.status === 429;
+      return sendJson(res, 502, {
+        error: busy
+          ? `NVIDIA's free endpoint is at capacity right now (${r.status}). This is temporary — try again in a minute.`
+          : `NVIDIA API ${r.status}: ${errText.slice(0, 300)}`,
+      });
     }
     const out = await r.json();
     const msg = out?.choices?.[0]?.message || {};
