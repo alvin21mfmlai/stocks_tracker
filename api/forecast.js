@@ -36,6 +36,40 @@ function buildStats(data) {
   };
 }
 
+// Next n trading days (Mon-Fri) after a given timestamp, as ms timestamps.
+function nextTradingDays(fromTs, n) {
+  const out = [];
+  const d = new Date(fromTs);
+  while (out.length < n) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    const wd = d.getUTCDay();
+    if (wd !== 0 && wd !== 6) out.push(d.getTime());
+  }
+  return out;
+}
+
+// Validate + normalize model predictions; attach real trading-day timestamps.
+function normalizePredictions(parsed, lastPoint, lastClose) {
+  const raw = Array.isArray(parsed?.predictions) ? parsed.predictions : [];
+  const nums = raw
+    .map((p) => ({ d: Number(p.d), price: Number(p.price), low: Number(p.low), high: Number(p.high) }))
+    .filter((p) => Number.isFinite(p.d) && Number.isFinite(p.price) && p.price > 0)
+    .sort((a, b) => a.d - b.d)
+    .slice(0, 7);
+  if (!nums.length) return [];
+  const days = nextTradingDays(lastPoint.t, nums.length);
+  return nums.map((p, i) => {
+    let lo = Number.isFinite(p.low) ? p.low : p.price;
+    let hi = Number.isFinite(p.high) ? p.high : p.price;
+    if (lo > hi) [lo, hi] = [hi, lo];
+    // Sanity clamp: reject bands wider than ±30% of the last close.
+    const cap = lastClose * 0.3;
+    lo = Math.max(lo, p.price - cap);
+    hi = Math.min(hi, p.price + cap);
+    return { d: p.d, t: days[i], price: round2(p.price), low: round2(Math.min(lo, p.price)), high: round2(Math.max(hi, p.price)) };
+  });
+}
+
 function extractJson(text) {
   // Strip reasoning traces and code fences, then find the outermost JSON object.
   const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/```(?:json)?/g, '');
@@ -87,8 +121,14 @@ Respond with ONLY a JSON object, no other text:
   "support": <number, key support level>,
   "resistance": <number, key resistance level>,
   "drivers": ["3-4 short bullet strings: what is driving the price action"],
-  "risks": ["2-3 short bullet strings: what could invalidate this outlook"]
-}`;
+  "risks": ["2-3 short bullet strings: what could invalidate this outlook"],
+  "predictions": [
+    {"d": 1, "price": <predicted close after 1 trading day>, "low": <plausible low>, "high": <plausible high>},
+    {"d": 2, "price": ..., "low": ..., "high": ...},
+    ... one entry for each of the next 7 trading days (d = 1 to 7)
+  ]
+}
+The predicted low/high band should widen with the horizon, consistent with the stock's daily volatility of ${stats.dailyVolPct}%. Keep predictions realistic — small daily moves anchored to the current price and trend.`;
 
     const r = await fetch(NVIDIA_URL, {
       method: 'POST',
@@ -111,6 +151,10 @@ Respond with ONLY a JSON object, no other text:
     const msg = out?.choices?.[0]?.message || {};
     const text = msg.content || msg.reasoning_content || '';
     const parsed = extractJson(text);
+    if (parsed) {
+      const lastPoint = data.points[data.points.length - 1];
+      parsed.predictions = normalizePredictions(parsed, lastPoint, stats.last);
+    }
 
     sendJson(res, 200, {
       symbol: data.symbol,

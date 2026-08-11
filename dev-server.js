@@ -39,19 +39,34 @@ const mockSearch = (q) => ({
     { symbol: 'AAPL', name: 'Apple Inc.', exchange: 'NASDAQ', type: 'EQUITY' },
   ].filter((r) => (r.symbol + r.name).toLowerCase().includes(q.toLowerCase())),
 });
-const mockForecast = (symbol) => ({
-  symbol, name: symbol, currency: 'USD',
-  stats: { last: 181.4, change1w: 2.1, change1m: 6.8, change3m: 14.2, sma20: 176.3, sma50: 168.9, dailyVolPct: 2.4, high3m: 184.2, low3m: 152.1 },
-  model: 'mock',
-  forecast: {
-    outlook: 'bullish', confidence: 'medium',
-    summary: 'Price is in a steady uptrend, holding above both the 20- and 50-day moving averages with contained volatility. Momentum favors a continued grind higher toward the recent high.',
-    support: 176.3, resistance: 184.2,
-    drivers: ['Sustained trend above 20/50-day SMAs', 'Higher lows over the past month', 'Volatility compressing near highs'],
-    risks: ['A close below the 20-day SMA would weaken the setup', 'Broad market pullback'],
-  },
-  generatedAt: Date.now(),
-});
+const mockForecast = (symbol) => {
+  const chart = mockChart(symbol, '3mo');
+  const last = chart.price;
+  const preds = [];
+  let t = chart.points[chart.points.length - 1].t;
+  for (let d = 1; d <= 7; d++) {
+    const dt = new Date(t);
+    do { dt.setUTCDate(dt.getUTCDate() + 1); } while (dt.getUTCDay() === 0 || dt.getUTCDay() === 6);
+    t = dt.getTime();
+    const price = +(last * (1 + 0.004 * d)).toFixed(2);
+    const band = last * 0.011 * Math.sqrt(d);
+    preds.push({ d, t, price, low: +(price - band).toFixed(2), high: +(price + band).toFixed(2) });
+  }
+  return {
+    symbol, name: chart.name, currency: chart.currency,
+    stats: { last, change1w: 2.1, change1m: 6.8, change3m: 14.2, sma20: +(last * 0.97).toFixed(2), sma50: +(last * 0.93).toFixed(2), dailyVolPct: 2.4, high3m: +(last * 1.02).toFixed(2), low3m: +(last * 0.84).toFixed(2) },
+    model: 'mock',
+    forecast: {
+      outlook: 'bullish', confidence: 'medium',
+      summary: 'Price is in a steady uptrend, holding above both the 20- and 50-day moving averages with contained volatility. Momentum favors a continued grind higher toward the recent high.',
+      support: +(last * 0.97).toFixed(2), resistance: +(last * 1.02).toFixed(2),
+      drivers: ['Sustained trend above 20/50-day SMAs', 'Higher lows over the past month', 'Volatility compressing near highs'],
+      risks: ['A close below the 20-day SMA would weaken the setup', 'Broad market pullback'],
+      predictions: preds,
+    },
+    generatedAt: Date.now(),
+  };
+};
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -65,7 +80,12 @@ const server = http.createServer(async (req, res) => {
         res.setHeader('Content-Type', 'application/json');
         if (url.pathname === '/api/stock') return res.end(JSON.stringify(mockChart(url.searchParams.get('symbol'), url.searchParams.get('range') || '1mo')));
         if (url.pathname === '/api/search') return res.end(JSON.stringify(mockSearch(url.searchParams.get('q') || '')));
-        if (url.pathname === '/api/forecast') return setTimeout(() => res.end(JSON.stringify(mockForecast('NVDA'))), 600);
+        if (url.pathname === '/api/forecast') {
+          const chunks = []; for await (const c of req) chunks.push(c);
+          let symbol = 'NVDA';
+          try { symbol = JSON.parse(Buffer.concat(chunks).toString() || '{}').symbol || 'NVDA'; } catch {}
+          return setTimeout(() => res.end(JSON.stringify(mockForecast(symbol))), 600);
+        }
       }
       const name = url.pathname.slice('/api/'.length).replace(/[^a-z]/g, '');
       const mod = await import(`./api/${name}.js`);

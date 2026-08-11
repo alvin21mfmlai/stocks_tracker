@@ -135,6 +135,13 @@
   .tooltip .tt-t { color: var(--text-muted); font-size: 11px; }
   .tooltip .tt-v { font-weight: 700; font-variant-numeric: tabular-nums; }
   .chart-msg { padding: 60px 0; text-align: center; color: var(--text-muted); font-size: 13px; }
+  .chart-legend { display: flex; gap: 16px; align-items: center; justify-content: flex-end; font-size: 11px; color: var(--text-secondary); padding: 2px 2px 6px; }
+  .chart-legend .sw { display: inline-block; width: 16px; height: 0; border-top: 2px solid var(--series-1); margin-right: 5px; vertical-align: middle; }
+  .chart-legend .sw.dash { border-top-style: dashed; }
+  .fc-horizons { display: flex; gap: 4px; margin-top: 6px; }
+  .fc-horizons button { border: 1px solid var(--border); background: none; color: var(--text-secondary); font-family: inherit; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+  .fc-horizons button:hover { background: var(--wash); }
+  .fc-horizons button.active { border-color: var(--series-1); color: var(--text-primary); }
 
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-top: 14px; }
   .tile { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
@@ -265,6 +272,9 @@
   let selected = watchlist[0];
   let range = '1d';
   let chartData = null;
+  let fc = null;          // {symbol, predictions:[{d,t,price,low,high}]}
+  let fcHorizon = 7;      // trading days of forecast shown on the chart
+  const FC_RANGES = ['1mo', '6mo'];  // ranges the forecast overlay draws on
   const quoteCache = {};   // symbol -> latest stock payload (1d)
   const RANGES = [['1d','1D'],['5d','5D'],['1mo','1M'],['6mo','6M'],['1y','1Y'],['5y','5Y']];
 
@@ -320,11 +330,19 @@
   // ---------- chart (hand-rolled SVG, crosshair + tooltip) ----------
   function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
 
+  function activeOverlay(d) {
+    if (!fc || fc.symbol !== d.symbol || !Array.isArray(fc.predictions) || !fc.predictions.length) return null;
+    if (!FC_RANGES.includes(d.range)) return null;
+    const preds = fc.predictions.slice(0, fcHorizon);
+    return preds.length ? preds : null;
+  }
+
   function renderChart(d) {
     chartData = d;
     const host = $('chart');
     const pts = d.points;
     if (!pts || pts.length < 2) { host.innerHTML = '<div class="chart-msg">No chart data for this range.</div>'; return; }
+    const preds = activeOverlay(d);
 
     const W = host.clientWidth || 640, H = 320;
     const pad = { l: 8, r: 56, t: 14, b: 26 };
@@ -332,10 +350,12 @@
 
     let lo = Math.min(...pts.map(p => p.c)), hi = Math.max(...pts.map(p => p.c));
     if (d.range === '1d' && d.prevClose != null) { lo = Math.min(lo, d.prevClose); hi = Math.max(hi, d.prevClose); }
+    if (preds) for (const p of preds) { lo = Math.min(lo, p.low ?? p.price); hi = Math.max(hi, p.high ?? p.price); }
     const padY = (hi - lo) * 0.08 || hi * 0.01 || 1;
     lo -= padY; hi += padY;
 
-    const t0 = pts[0].t, t1 = pts[pts.length - 1].t;
+    const t0 = pts[0].t, tEnd = pts[pts.length - 1].t;
+    const t1 = preds ? preds[preds.length - 1].t : tEnd;
     const x = (t) => pad.l + ((t - t0) / (t1 - t0 || 1)) * iw;
     const y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * ih;
 
@@ -356,7 +376,7 @@
     }
 
     const line = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.c).toFixed(1)}`).join('');
-    const area = `${line}L${x(t1).toFixed(1)},${(pad.t + ih).toFixed(1)}L${x(t0).toFixed(1)},${(pad.t + ih).toFixed(1)}Z`;
+    const area = `${line}L${x(tEnd).toFixed(1)},${(pad.t + ih).toFixed(1)}L${x(t0).toFixed(1)},${(pad.t + ih).toFixed(1)}Z`;
 
     const grid = cssVar('--grid'), baseline = cssVar('--baseline'), muted = cssVar('--text-muted'), series = cssVar('--series-1');
     let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Price chart for ${d.symbol}">`;
@@ -371,6 +391,18 @@
       svg += `<line x1="${pad.l}" x2="${pad.l + iw}" y1="${y(d.prevClose).toFixed(1)}" y2="${y(d.prevClose).toFixed(1)}" stroke="${baseline}" stroke-width="1" stroke-dasharray="3 4"/>`;
     svg += `<path d="${area}" fill="url(#ag)"/>`;
     svg += `<path d="${line}" fill="none" stroke="${series}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    if (preds) {
+      const lastC = pts[pts.length - 1].c;
+      const fpts = [{ t: tEnd, price: lastC, low: lastC, high: lastC }, ...preds];
+      const bandTop = fpts.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.high ?? p.price).toFixed(1)}`).join('');
+      const bandBot = [...fpts].reverse().map((p) => `L${x(p.t).toFixed(1)},${y(p.low ?? p.price).toFixed(1)}`).join('');
+      svg += `<path d="${bandTop}${bandBot}Z" fill="${series}" fill-opacity="0.10"/>`;
+      const fline = fpts.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.price).toFixed(1)}`).join('');
+      svg += `<path d="${fline}" fill="none" stroke="${series}" stroke-width="2" stroke-dasharray="5 5" stroke-linejoin="round" stroke-linecap="round"/>`;
+      for (const p of preds)
+        svg += `<circle cx="${x(p.t).toFixed(1)}" cy="${y(p.price).toFixed(1)}" r="3.5" fill="${series}" stroke="${cssVar('--surface-1')}" stroke-width="1.5"/>`;
+      svg += `<line x1="${x(tEnd).toFixed(1)}" x2="${x(tEnd).toFixed(1)}" y1="${pad.t}" y2="${pad.t + ih}" stroke="${baseline}" stroke-width="1" stroke-dasharray="2 3"/>`;
+    }
     xlabs.forEach((xl, i) => {
       const anchor = i === 0 ? 'start' : i === xlabs.length - 1 ? 'end' : 'middle';
       svg += `<text x="${xl.x.toFixed(1)}" y="${H - 8}" font-size="11" fill="${muted}" text-anchor="${anchor}">${xl.text}</text>`;
@@ -379,30 +411,40 @@
     svg += `<circle id="xdot" r="4" fill="${series}" stroke="${cssVar('--surface-1')}" stroke-width="2" visibility="hidden"/>`;
     svg += `<rect id="hover" x="${pad.l}" y="${pad.t}" width="${iw}" height="${ih}" fill="transparent"/>`;
     svg += `</svg>`;
-    host.innerHTML = svg;
+    const legend = preds
+      ? `<div class="chart-legend"><span><span class="sw"></span>History</span><span><span class="sw dash"></span>AI forecast (${preds.length} trading day${preds.length > 1 ? 's' : ''})</span></div>`
+      : '';
+    host.innerHTML = legend + svg;
 
     // hover interactions
     const svgEl = host.querySelector('svg');
     const xh = svgEl.querySelector('#xh'), dot = svgEl.querySelector('#xdot'), hover = svgEl.querySelector('#hover');
     const tt = $('tooltip');
+    const all = pts.map((p) => ({ t: p.t, c: p.c }));
+    if (preds) for (const p of preds) all.push({ t: p.t, c: p.price, lo: p.low, hi: p.high, f: true });
     const move = (ev) => {
       const rect = svgEl.getBoundingClientRect();
       const mx = (ev.clientX - rect.left) * (W / rect.width);
       const tAt = t0 + ((mx - pad.l) / iw) * (t1 - t0);
       let best = 0, bd = Infinity;
-      for (let i = 0; i < pts.length; i++) { const dd = Math.abs(pts[i].t - tAt); if (dd < bd) { bd = dd; best = i; } }
-      const p = pts[best], px = x(p.t), py = y(p.c);
+      for (let i = 0; i < all.length; i++) { const dd = Math.abs(all[i].t - tAt); if (dd < bd) { bd = dd; best = i; } }
+      const p = all[best], px = x(p.t), py = y(p.c);
       xh.setAttribute('x1', px); xh.setAttribute('x2', px); xh.setAttribute('visibility', 'visible');
       dot.setAttribute('cx', px); dot.setAttribute('cy', py); dot.setAttribute('visibility', 'visible');
       const dt = new Date(p.t);
       const when = d.range === '1d' ? dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         : dt.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
-      tt.innerHTML = `<div class="tt-t">${when}</div><div class="tt-v">${d.currency ? d.currency + ' ' : ''}${fmt(p.c)}</div>`;
+      const cur = d.currency ? d.currency + ' ' : '';
+      tt.innerHTML = p.f
+        ? `<div class="tt-t">${when} · AI forecast</div><div class="tt-v">${cur}${fmt(p.c)}</div><div class="tt-t">range ${fmt(p.lo)} – ${fmt(p.hi)}</div>`
+        : `<div class="tt-t">${when}</div><div class="tt-v">${cur}${fmt(p.c)}</div>`;
       tt.style.display = 'block';
-      const hostRect = host.getBoundingClientRect();
-      const left = (px / W) * hostRect.width;
-      tt.style.left = Math.min(hostRect.width - tt.offsetWidth - 4, Math.max(4, left + 12)) + 'px';
-      tt.style.top = Math.max(0, (py / H) * hostRect.height - tt.offsetHeight - 12) + 'px';
+      const wrapRect = host.parentElement.getBoundingClientRect();
+      const svgRect = svgEl.getBoundingClientRect();
+      const left = svgRect.left - wrapRect.left + (px / W) * svgRect.width;
+      const top = svgRect.top - wrapRect.top + (py / H) * svgRect.height;
+      tt.style.left = Math.min(wrapRect.width - tt.offsetWidth - 4, Math.max(4, left + 12)) + 'px';
+      tt.style.top = Math.max(0, top - tt.offsetHeight - 12) + 'px';
     };
     const leave = () => { xh.setAttribute('visibility', 'hidden'); dot.setAttribute('visibility', 'hidden'); tt.style.display = 'none'; };
     hover.addEventListener('mousemove', move);
@@ -485,7 +527,10 @@
 
   // ---------- forecast ----------
   const fcBtn = $('fcBtn'), fcResult = $('fcResult');
-  function resetForecast() { fcResult.innerHTML = ''; fcBtn.disabled = false; fcBtn.textContent = 'Generate forecast'; }
+  function resetForecast() {
+    fcResult.innerHTML = ''; fcBtn.disabled = false; fcBtn.textContent = 'Generate forecast';
+    if (fc) { fc = null; if (chartData) renderChart(chartData); }
+  }
   fcBtn.addEventListener('click', async () => {
     if (!selected) return;
     fcBtn.disabled = true; fcBtn.textContent = 'Analyzing… (can take ~30s)';
@@ -498,6 +543,10 @@
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
       renderForecast(j);
+      fc = (j.forecast && Array.isArray(j.forecast.predictions) && j.forecast.predictions.length)
+        ? { symbol: j.symbol, predictions: j.forecast.predictions } : null;
+      if (fc && !FC_RANGES.includes(range)) { range = '1mo'; renderRanges(); loadSelected(); }
+      else if (chartData) renderChart(chartData);
     } catch (e) {
       fcResult.innerHTML = `<div class="skel">Forecast failed: ${e.message}</div>`;
     } finally {
@@ -522,8 +571,22 @@
       html += `<h4>Drivers</h4><ul>${f.drivers.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`;
     if (Array.isArray(f.risks) && f.risks.length)
       html += `<h4>Risks</h4><ul>${f.risks.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`;
+    if (Array.isArray(f.predictions) && f.predictions.length) {
+      const hs = [1, 3, 5, 7].filter((n) => n <= f.predictions.length);
+      if (!hs.includes(fcHorizon)) fcHorizon = hs[hs.length - 1];
+      html += `<h4>Forecast on chart</h4><div class="fc-horizons">${hs.map((n) =>
+        `<button data-h="${n}" class="${n === fcHorizon ? 'active' : ''}">${n}d</button>`).join('')}</div>`;
+      html += `<h4>Predicted closes</h4><ul>${f.predictions.map((p) =>
+        `<li>${new Date(p.t).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}: <strong>${fmt(p.price)}</strong> <span style="color:var(--text-muted)">(${fmt(p.low)} – ${fmt(p.high)})</span></li>`).join('')}</ul>`;
+    }
     fcResult.innerHTML = html;
   }
+  fcResult.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-h]'); if (!b) return;
+    fcHorizon = +b.dataset.h;
+    fcResult.querySelectorAll('button[data-h]').forEach((x) => x.classList.toggle('active', +x.dataset.h === fcHorizon));
+    if (chartData) renderChart(chartData);
+  });
 
   // ---------- load & refresh ----------
   async function loadSelected() {

@@ -8,6 +8,10 @@ A live stock viewer with AI forecasting, powered by Yahoo Finance data and NVIDI
 - One-click AI forecast: the last 3 months of price action + computed stats
   (SMAs, volatility, ranges) are sent to Nemotron, which returns an outlook,
   support/resistance levels, drivers, and risks
+- Time-series forecast: Nemotron also predicts closing prices for the next
+  7 trading days (with a low–high band). They're plotted on the chart as a
+  dashed line with a confidence band — switch the horizon with the
+  1d / 3d / 5d / 7d buttons in the forecast panel
 - Your NVIDIA API key stays server-side in a serverless function — it is never
   exposed to the browser
 
