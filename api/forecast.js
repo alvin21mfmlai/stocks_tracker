@@ -3,7 +3,7 @@
 import { getChart, getNews, sendJson } from './_yahoo.js';
 
 const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
-const MODEL = process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-super-120b-a12b';
+const MODEL = process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b';
 
 function pct(a, b) { return b ? ((a - b) / b) * 100 : 0; }
 function sma(arr, n) {
@@ -142,40 +142,62 @@ Respond with ONLY a JSON object, no other text:
 }
 The predicted low/high band should widen with the horizon, consistent with the stock's daily volatility of ${stats.dailyVolPct}%. Keep predictions realistic — small daily moves anchored to the current price and trend.`;
 
-    // NVIDIA's free endpoint runs on shared capacity and occasionally answers
-    // 503 ResourceExhausted / 429 when the model's worker pool is full.
-    // Retry with a short backoff — but inside a hard time budget so WE answer
-    // with clean JSON before the serverless platform kills the function
-    // (a platform timeout sends the browser an HTML error page instead).
+    // Nemotron 3 Super is a REASONING model: by default it generates a long
+    // hidden thinking trace before the answer, which on the free shared
+    // endpoint regularly takes 40s+ and blows the serverless time limit.
+    // Strategy: try with a capped thinking budget first, fall back to
+    // thinking-off (much faster), then to a plain request (in case the
+    // endpoint rejects the reasoning-control parameters). All inside a hard
+    // time budget so WE always answer clean JSON before the platform kills
+    // the function (a platform timeout sends the browser an HTML error page).
+    const makeBody = (mode) => {
+      const body = {
+        model: MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 4096,
+        stream: false,
+        temperature: 1.0,
+        top_p: 0.95,
+      };
+      if (mode === 'budget') {
+        body.chat_template_kwargs = { enable_thinking: true };
+        body.reasoning_budget = 2048;          // cap hidden thinking tokens
+      } else if (mode === 'fast') {
+        body.chat_template_kwargs = { enable_thinking: false };
+        body.temperature = 0.2;                // low temp recommended when thinking is off
+      }
+      return body;                             // 'plain' = no reasoning-control params
+    };
+    const PLAN = process.env.NVIDIA_THINKING === 'off' ? ['fast', 'plain']
+               : process.env.NVIDIA_THINKING === 'full' ? ['plain']
+               : ['budget', 'fast', 'plain'];
+
     const TOTAL_BUDGET_MS = 50_000;   // stay under vercel.json maxDuration (60s)
     const started = Date.now();
     let r = null, errText = '', timedOut = false;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      if (attempt > 0) await new Promise((ok) => setTimeout(ok, attempt * 2000));
+    for (const mode of PLAN) {
       const remaining = TOTAL_BUDGET_MS - (Date.now() - started);
-      if (remaining < 10_000) { timedOut = true; break; }  // not enough time left for a real attempt
+      if (remaining < 8_000) { timedOut = true; break; }  // not enough time left for a real attempt
       try {
         r = await fetch(NVIDIA_URL, {
           method: 'POST',
           headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: MODEL,
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 1.0,
-            top_p: 0.95,
-            max_tokens: 4096,
-            stream: false,
-          }),
-          signal: AbortSignal.timeout(Math.min(remaining, 40_000)),
+          body: JSON.stringify(makeBody(mode)),
+          signal: AbortSignal.timeout(Math.min(remaining - 2_000, 35_000)),
         });
-      } catch (e) {
-        // Abort = this attempt ran out of time; retry only if budget remains.
+      } catch {
+        // Abort = this attempt ran out of time; try the next (faster) mode.
         timedOut = true; r = null;
         continue;
       }
       if (r.ok) break;
       errText = await r.text();
-      if (r.status !== 503 && r.status !== 429) break; // don't retry real errors (bad key, bad model id, …)
+      if (r.status === 400 || r.status === 422) continue;  // params not supported → simpler body
+      if (r.status === 503 || r.status === 429) {          // capacity → brief pause, then next mode
+        await new Promise((ok) => setTimeout(ok, 1500));
+        continue;
+      }
+      break; // real error (bad key, bad model id, …) — don't retry
     }
 
     if (!r || !r.ok) {
