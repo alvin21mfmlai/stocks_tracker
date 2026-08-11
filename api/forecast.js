@@ -144,33 +144,50 @@ The predicted low/high band should widen with the horizon, consistent with the s
 
     // NVIDIA's free endpoint runs on shared capacity and occasionally answers
     // 503 ResourceExhausted / 429 when the model's worker pool is full.
-    // Retry a couple of times with a short backoff before giving up.
-    let r, errText = '';
+    // Retry with a short backoff — but inside a hard time budget so WE answer
+    // with clean JSON before the serverless platform kills the function
+    // (a platform timeout sends the browser an HTML error page instead).
+    const TOTAL_BUDGET_MS = 50_000;   // stay under vercel.json maxDuration (60s)
+    const started = Date.now();
+    let r = null, errText = '', timedOut = false;
     for (let attempt = 0; attempt < 3; attempt++) {
       if (attempt > 0) await new Promise((ok) => setTimeout(ok, attempt * 2000));
-      r = await fetch(NVIDIA_URL, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: MODEL,
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 1.0,
-          top_p: 0.95,
-          max_tokens: 4096,
-          stream: false,
-        }),
-      });
+      const remaining = TOTAL_BUDGET_MS - (Date.now() - started);
+      if (remaining < 10_000) { timedOut = true; break; }  // not enough time left for a real attempt
+      try {
+        r = await fetch(NVIDIA_URL, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: MODEL,
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 1.0,
+            top_p: 0.95,
+            max_tokens: 4096,
+            stream: false,
+          }),
+          signal: AbortSignal.timeout(Math.min(remaining, 40_000)),
+        });
+      } catch (e) {
+        // Abort = this attempt ran out of time; retry only if budget remains.
+        timedOut = true; r = null;
+        continue;
+      }
       if (r.ok) break;
       errText = await r.text();
       if (r.status !== 503 && r.status !== 429) break; // don't retry real errors (bad key, bad model id, …)
     }
 
-    if (!r.ok) {
-      const busy = r.status === 503 || r.status === 429;
+    if (!r || !r.ok) {
+      const busy = r && (r.status === 503 || r.status === 429);
       return sendJson(res, 502, {
-        error: busy
-          ? `NVIDIA's free endpoint is at capacity right now (${r.status}). This is temporary — try again in a minute.`
-          : `NVIDIA API ${r.status}: ${errText.slice(0, 300)}`,
+        error: !r
+          ? (timedOut
+              ? 'The model took too long to respond. This happens when the free endpoint is slow under load — try again.'
+              : 'Could not reach the NVIDIA API. Try again.')
+          : busy
+            ? `NVIDIA's free endpoint is at capacity right now (${r.status}). This is temporary — try again in a minute.`
+            : `NVIDIA API ${r.status}: ${errText.slice(0, 300)}`,
       });
     }
     const out = await r.json();
