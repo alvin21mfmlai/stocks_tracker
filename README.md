@@ -12,6 +12,9 @@ A live stock viewer with AI forecasting, powered by Yahoo Finance data and NVIDI
   7 trading days (with a low–high band). They're plotted on the chart as a
   dashed line with a confidence band — switch the horizon with the
   1d / 3d / 5d / 7d buttons in the forecast panel
+- Latest news headlines for the selected stock (via Yahoo Finance), shown below
+  the chart and fed into the AI forecast — the model weighs headlines alongside
+  price action and reports their impact in a "News impact" section
 - Your NVIDIA API key stays server-side in a serverless function — it is never
   exposed to the browser
 
@@ -21,6 +24,7 @@ A live stock viewer with AI forecasting, powered by Yahoo Finance data and NVIDI
 index.html        the whole frontend (no build step)
 api/stock.js      GET  /api/stock?symbol=NVDA&range=1mo  → quote + price series
 api/search.js     GET  /api/search?q=dbs                 → ticker search
+api/news.js       GET  /api/news?symbol=NVDA             → latest headlines
 api/forecast.js   POST /api/forecast {symbol}            → Nemotron AI outlook
 api/_yahoo.js     shared Yahoo Finance helpers (not exposed as an endpoint)
 dev-server.js     local dev server (optional)

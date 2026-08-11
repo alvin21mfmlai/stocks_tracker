@@ -75,6 +75,21 @@ export async function searchSymbols(q) {
     }));
 }
 
+export async function getNews(symbol, count = 8) {
+  const j = await yahooJson(
+    `/v1/finance/search?q=${encodeURIComponent(symbol)}&quotesCount=0&newsCount=${count}&listsCount=0`
+  );
+  return (j?.news || [])
+    .map((n) => ({
+      title: n.title || '',
+      publisher: n.publisher || '',
+      link: n.link || '',
+      publishedAt: n.providerPublishTime ? n.providerPublishTime * 1000 : null,
+    }))
+    .filter((n) => n.title)
+    .sort((a, b) => (b.publishedAt || 0) - (a.publishedAt || 0));
+}
+
 export function sendJson(res, status, body, cacheSeconds = 0) {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');

@@ -191,6 +191,12 @@
   .fc-result ul { padding-left: 18px; }
   .fc-result li { margin-bottom: 4px; }
   .fc-levels { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  /* ---- news ---- */
+  .news-item { display: block; padding: 10px 2px; border-bottom: 1px solid var(--grid); text-decoration: none; color: var(--text-primary); border-radius: 6px; }
+  .news-item:last-child { border-bottom: 0; }
+  .news-item:hover { background: var(--wash); }
+  .news-item .nt { font-size: 13px; line-height: 1.4; font-weight: 500; }
+  .news-item .nm2 { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
   .err-banner {
     background: color-mix(in srgb, var(--status-critical) 10%, var(--surface-1));
     border: 1px solid var(--status-critical); color: var(--text-primary);
@@ -235,6 +241,10 @@
         </div>
         <div class="tiles" id="tiles"></div>
       </div>
+      <div class="card" style="margin-top:16px">
+        <h3 style="font-size:13px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">News</h3>
+        <div id="news"><div class="skel">Loading news…</div></div>
+      </div>
     </div>
 
     <div class="side">
@@ -263,7 +273,7 @@
   const fmt = (n, d = 2) => n == null ? '—' : Number(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
 
   // ---------- state ----------
-  const DEFAULTS = ['NVDA', 'D05.SI', 'O39.SI', 'U11.SI', 'BSY'];
+  const DEFAULTS = ['NVDA', 'D05.SI'];
   let watchlist = DEFAULTS.slice();
   try {
     const saved = JSON.parse(localStorage.getItem('ls_watchlist') || 'null');
@@ -488,7 +498,7 @@
       return;
     }
     const item = e.target.closest('.wl-item'); if (!item) return;
-    selected = item.dataset.s; renderWatchlist(); loadSelected(); resetForecast();
+    selected = item.dataset.s; renderWatchlist(); loadSelected(); resetForecast(); loadNews();
   });
 
   async function refreshWatchlistQuotes() {
@@ -521,9 +531,35 @@
     if (!watchlist.includes(sym)) { watchlist.push(sym); saveWl(); }
     selected = sym;
     sInput.value = ''; sBox.classList.remove('open');
-    renderWatchlist(); loadSelected(); resetForecast(); refreshWatchlistQuotes();
+    renderWatchlist(); loadSelected(); resetForecast(); refreshWatchlistQuotes(); loadNews();
   });
   document.addEventListener('click', (e) => { if (!e.target.closest('.searchbox')) sBox.classList.remove('open'); });
+
+  // ---------- news ----------
+  function relTime(ts) {
+    if (!ts) return '';
+    const h = Math.round((Date.now() - ts) / 36e5);
+    if (h < 1) return 'just now';
+    if (h < 24) return `${h}h ago`;
+    const dd = Math.round(h / 24);
+    return dd === 1 ? '1 day ago' : `${dd} days ago`;
+  }
+  async function loadNews() {
+    if (!selected) return;
+    const sym = selected;
+    try {
+      const { news } = await api(`/api/news?symbol=${encodeURIComponent(sym)}`);
+      if (sym !== selected) return; // user switched stocks mid-fetch
+      $('news').innerHTML = news.length
+        ? news.map((n) => `<a class="news-item" href="${esc(n.link)}" target="_blank" rel="noopener">
+            <div class="nt">${esc(n.title)}</div>
+            <div class="nm2">${esc(n.publisher)}${n.publishedAt ? ' · ' + relTime(n.publishedAt) : ''}</div>
+          </a>`).join('')
+        : '<div class="skel">No recent news for this stock.</div>';
+    } catch (e) {
+      if (sym === selected) $('news').innerHTML = `<div class="skel">Could not load news: ${esc(e.message)}</div>`;
+    }
+  }
 
   // ---------- forecast ----------
   const fcBtn = $('fcBtn'), fcResult = $('fcResult');
@@ -562,6 +598,7 @@
       <span class="badge ${esc(f.outlook)}">${icon} ${esc((f.outlook || '').toUpperCase())}</span>
       <span class="badge conf">confidence: ${esc(f.confidence || '—')}</span></div>`;
     html += `<div>${esc(f.summary || '')}</div>`;
+    if (f.news_impact) html += `<h4>News impact</h4><div>${esc(f.news_impact)}</div>`;
     if (f.support != null || f.resistance != null) {
       html += `<div class="fc-levels">
         <div class="tile"><div class="k">Support</div><div class="v">${fmt(f.support)}</div></div>
@@ -604,9 +641,10 @@
 
   window.addEventListener('resize', () => { if (chartData) renderChart(chartData); });
   setInterval(() => { loadSelected(); refreshWatchlistQuotes(); }, 60000);
+  setInterval(loadNews, 300000);  // news refreshes every 5 minutes
 
   renderRanges(); renderWatchlist();
-  loadSelected(); refreshWatchlistQuotes();
+  loadSelected(); refreshWatchlistQuotes(); loadNews();
 })();
 </script>
 </body>

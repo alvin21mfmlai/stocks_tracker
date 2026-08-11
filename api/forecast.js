@@ -1,10 +1,9 @@
 // POST /api/forecast  { symbol }  -> AI outlook from NVIDIA Nemotron
 // Requires env var NVIDIA_API_KEY (set it in Vercel project settings).
-import { getChart, sendJson } from './_yahoo.js';
+import { getChart, getNews, sendJson } from './_yahoo.js';
 
 const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
-// const MODEL = process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-super-120b-a12b';
-const MODEL = process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b';
+const MODEL = process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-super-120b-a12b';
 
 function pct(a, b) { return b ? ((a - b) / b) * 100 : 0; }
 function sma(arr, n) {
@@ -97,9 +96,18 @@ export default async function handler(req, res) {
     const { symbol } = await readBody(req);
     if (!symbol) return sendJson(res, 400, { error: 'symbol is required' });
 
-    const data = await getChart(symbol, '3mo');
+    const [data, news] = await Promise.all([
+      getChart(symbol, '3mo'),
+      getNews(symbol).catch(() => []),   // news is best-effort; forecast still works without it
+    ]);
     const stats = buildStats(data);
     const recent = data.points.slice(-30).map((p) => `${new Date(p.t).toISOString().slice(0, 10)}: ${p.c}`).join('\n');
+    const newsBlock = news.length
+      ? '\nRecent news headlines (newest first):\n' + news.slice(0, 8).map((n) => {
+          const age = n.publishedAt ? Math.round((Date.now() - n.publishedAt) / 36e5) : null;
+          return `- [${n.publisher}${age != null ? `, ${age < 24 ? age + 'h' : Math.round(age / 24) + 'd'} ago` : ''}] ${n.title}`;
+        }).join('\n') + '\n'
+      : '';
 
     const prompt = `You are an equity analyst. Analyze this stock and give a short-term (1-2 week) outlook.
 
@@ -113,6 +121,8 @@ Daily volatility: ${stats.dailyVolPct}%
 
 Last 30 daily closes:
 ${recent}
+${newsBlock}
+Weigh both the price action AND the news headlines in your analysis. If a headline is significant (earnings, guidance, regulation, M&A), let it influence the outlook and predictions.
 
 Respond with ONLY a JSON object, no other text:
 {
@@ -123,6 +133,7 @@ Respond with ONLY a JSON object, no other text:
   "resistance": <number, key resistance level>,
   "drivers": ["3-4 short bullet strings: what is driving the price action"],
   "risks": ["2-3 short bullet strings: what could invalidate this outlook"],
+  "news_impact": "1-2 sentences: how the recent headlines affect this outlook (omit or null if no news was provided)",
   "predictions": [
     {"d": 1, "price": <predicted close after 1 trading day>, "low": <plausible low>, "high": <plausible high>},
     {"d": 2, "price": ..., "low": ..., "high": ...},
@@ -162,6 +173,7 @@ The predicted low/high band should widen with the horizon, consistent with the s
       name: data.name,
       currency: data.currency,
       stats,
+      newsUsed: news.slice(0, 8).length,
       model: MODEL,
       forecast: parsed,
       raw: parsed ? undefined : text.slice(0, 2000),

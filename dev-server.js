@@ -32,6 +32,15 @@ function mockChart(symbol, range) {
     marketState: 'REGULAR', range, interval: 'mock', points,
   };
 }
+const mockNews = (symbol) => ({
+  symbol,
+  news: [
+    { title: `${symbol === 'D05.SI' ? 'DBS' : 'NVIDIA'} beats quarterly expectations as demand stays strong`, publisher: 'Reuters', link: 'https://example.com/1', publishedAt: Date.now() - 3 * 36e5 },
+    { title: 'Analysts raise price targets ahead of earnings season', publisher: 'Bloomberg', link: 'https://example.com/2', publishedAt: Date.now() - 9 * 36e5 },
+    { title: 'Sector rotation puts spotlight on large caps', publisher: 'CNBC', link: 'https://example.com/3', publishedAt: Date.now() - 26 * 36e5 },
+    { title: 'Market wrap: stocks drift as investors weigh rate outlook', publisher: 'Yahoo Finance', link: 'https://example.com/4', publishedAt: Date.now() - 50 * 36e5 },
+  ],
+});
 const mockSearch = (q) => ({
   results: [
     { symbol: 'NVDA', name: 'NVIDIA Corporation', exchange: 'NASDAQ', type: 'EQUITY' },
@@ -62,6 +71,7 @@ const mockForecast = (symbol) => {
       support: +(last * 0.97).toFixed(2), resistance: +(last * 1.02).toFixed(2),
       drivers: ['Sustained trend above 20/50-day SMAs', 'Higher lows over the past month', 'Volatility compressing near highs'],
       risks: ['A close below the 20-day SMA would weaken the setup', 'Broad market pullback'],
+      news_impact: 'Recent earnings-beat coverage and raised analyst targets support the bullish tilt; no negative catalysts in the latest headlines.',
       predictions: preds,
     },
     generatedAt: Date.now(),
@@ -80,6 +90,7 @@ const server = http.createServer(async (req, res) => {
         res.setHeader('Content-Type', 'application/json');
         if (url.pathname === '/api/stock') return res.end(JSON.stringify(mockChart(url.searchParams.get('symbol'), url.searchParams.get('range') || '1mo')));
         if (url.pathname === '/api/search') return res.end(JSON.stringify(mockSearch(url.searchParams.get('q') || '')));
+        if (url.pathname === '/api/news') return res.end(JSON.stringify(mockNews(url.searchParams.get('symbol') || 'NVDA')));
         if (url.pathname === '/api/forecast') {
           const chunks = []; for await (const c of req) chunks.push(c);
           let symbol = 'NVDA';
