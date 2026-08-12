@@ -278,6 +278,14 @@
   try {
     const saved = JSON.parse(localStorage.getItem('ls_watchlist') || 'null');
     if (Array.isArray(saved) && saved.length) watchlist = saved;
+    // Merge in any DEFAULTS this browser hasn't been seeded with before, so
+    // edits to DEFAULTS reach returning visitors — without resurrecting
+    // defaults the user deliberately removed from their watchlist.
+    const seeded = new Set(JSON.parse(localStorage.getItem('ls_seeded') || '[]'));
+    const fresh = DEFAULTS.filter((s) => !seeded.has(s) && !watchlist.includes(s));
+    if (fresh.length) watchlist = watchlist.concat(fresh);
+    DEFAULTS.forEach((s) => seeded.add(s));
+    localStorage.setItem('ls_seeded', JSON.stringify([...seeded]));
   } catch {}
   let selected = watchlist[0];
   let range = '1d';
