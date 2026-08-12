@@ -5,7 +5,7 @@ import { getChart, getNews, sendJson } from './_yahoo.js';
 const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const MODEL = process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-super-120b-a12b';
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-5';
  
 function pct(a, b) { return b ? ((a - b) / b) * 100 : 0; }
 function sma(arr, n) {
@@ -169,7 +169,7 @@ The predicted low/high band should widen with the horizon, consistent with the s
           messages: [{ role: 'user', content: prompt }],
           max_completion_tokens: 4096,
         };
-        if (mode === 'effort') body.reasoning_effort = process.env.OPENAI_REASONING || 'low';
+        if (mode === 'effort') body.reasoning_effort = process.env.OPENAI_REASONING || 'medium';
         return body;                           // 'plain' = no reasoning params (for non-reasoning models)
       }
       const body = {
