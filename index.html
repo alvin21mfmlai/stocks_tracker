@@ -254,9 +254,13 @@
       </div>
       <div class="card">
         <h3>AI Forecast</h3>
+        <div class="fc-horizons" id="fcProvider" style="margin:0 0 10px" role="radiogroup" aria-label="AI provider">
+          <button data-p="nvidia">NVIDIA</button>
+          <button data-p="openai">OpenAI</button>
+        </div>
         <button id="fcBtn" class="fc-btn">Generate forecast</button>
         <div id="fcResult" class="fc-result"></div>
-        <div class="fc-note">Powered by NVIDIA Nemotron. AI-generated analysis of recent price action — not financial advice.</div>
+        <div class="fc-note">Powered by NVIDIA Nemotron or OpenAI. AI-generated analysis of recent price action — not financial advice.</div>
       </div>
     </div>
   </div>
@@ -571,6 +575,17 @@
 
   // ---------- forecast ----------
   const fcBtn = $('fcBtn'), fcResult = $('fcResult');
+  let provider = 'nvidia';
+  try { if (localStorage.getItem('ls_provider') === 'openai') provider = 'openai'; } catch {}
+  const paintProvider = () => $('fcProvider').querySelectorAll('button').forEach((b) =>
+    b.classList.toggle('active', b.dataset.p === provider));
+  paintProvider();
+  $('fcProvider').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-p]'); if (!b) return;
+    provider = b.dataset.p;
+    try { localStorage.setItem('ls_provider', provider); } catch {}
+    paintProvider();
+  });
   function resetForecast() {
     fcResult.innerHTML = ''; fcBtn.disabled = false; fcBtn.textContent = 'Generate forecast';
     if (fc) { fc = null; if (chartData) renderChart(chartData); }
@@ -582,7 +597,7 @@
     try {
       const r = await fetch('/api/forecast', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: selected }),
+        body: JSON.stringify({ symbol: selected, provider }),
       });
       const text = await r.text();
       let j;
@@ -613,7 +628,8 @@
     const icon = f.outlook === 'bullish' ? '▲' : f.outlook === 'bearish' ? '▼' : '◆';
     let html = `<div class="fc-badges">
       <span class="badge ${esc(f.outlook)}">${icon} ${esc((f.outlook || '').toUpperCase())}</span>
-      <span class="badge conf">confidence: ${esc(f.confidence || '—')}</span></div>`;
+      <span class="badge conf">confidence: ${esc(f.confidence || '—')}</span>
+      ${j.model ? `<span class="badge conf">${esc(String(j.model).split('/').pop())}</span>` : ''}</div>`;
     html += `<div>${esc(f.summary || '')}</div>`;
     if (f.news_impact) html += `<h4>News impact</h4><div>${esc(f.news_impact)}</div>`;
     if (f.support != null || f.resistance != null) {
