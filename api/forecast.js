@@ -1,10 +1,12 @@
 // POST /api/forecast  { symbol }  -> AI outlook from NVIDIA Nemotron
 // Requires env var NVIDIA_API_KEY (set it in Vercel project settings).
 import { getChart, getNews, sendJson } from './_yahoo.js';
-
+ 
 const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
-const MODEL = process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b';
-
+const MODEL = process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-super-120b-a12b';
+const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
+ 
 function pct(a, b) { return b ? ((a - b) / b) * 100 : 0; }
 function sma(arr, n) {
   if (arr.length < n) return null;
@@ -12,7 +14,7 @@ function sma(arr, n) {
   return s / n;
 }
 function round2(x) { return x == null ? null : Math.round(x * 100) / 100; }
-
+ 
 function buildStats(data) {
   const closes = data.points.map((p) => p.c);
   const last = closes[closes.length - 1];
@@ -35,7 +37,7 @@ function buildStats(data) {
     fiftyTwoWeekLow: round2(data.fiftyTwoWeekLow),
   };
 }
-
+ 
 // Next n trading days (Mon-Fri) after a given timestamp, as ms timestamps.
 function nextTradingDays(fromTs, n) {
   const out = [];
@@ -47,7 +49,7 @@ function nextTradingDays(fromTs, n) {
   }
   return out;
 }
-
+ 
 // Validate + normalize model predictions; attach real trading-day timestamps.
 function normalizePredictions(parsed, lastPoint, lastClose) {
   const raw = Array.isArray(parsed?.predictions) ? parsed.predictions : [];
@@ -69,7 +71,7 @@ function normalizePredictions(parsed, lastPoint, lastClose) {
     return { d: p.d, t: days[i], price: round2(p.price), low: round2(Math.min(lo, p.price)), high: round2(Math.max(hi, p.price)) };
   });
 }
-
+ 
 function extractJson(text) {
   // Strip reasoning traces and code fences, then find the outermost JSON object.
   const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/```(?:json)?/g, '');
@@ -78,7 +80,7 @@ function extractJson(text) {
   if (start === -1 || end <= start) return null;
   try { return JSON.parse(cleaned.slice(start, end + 1)); } catch { return null; }
 }
-
+ 
 async function readBody(req) {
   if (req.body) return typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
   const chunks = [];
@@ -86,16 +88,24 @@ async function readBody(req) {
   const raw = Buffer.concat(chunks).toString('utf8');
   return raw ? JSON.parse(raw) : {};
 }
-
+ 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return sendJson(res, 405, { error: 'POST only' });
-  const apiKey = process.env.NVIDIA_API_KEY;
-  if (!apiKey) return sendJson(res, 500, { error: 'NVIDIA_API_KEY is not set on the server' });
-
+ 
   try {
-    const { symbol } = await readBody(req);
+    const { symbol, provider: reqProvider } = await readBody(req);
     if (!symbol) return sendJson(res, 400, { error: 'symbol is required' });
-
+    const provider = reqProvider === 'openai' ? 'openai' : 'nvidia';
+    const providerName = provider === 'openai' ? 'OpenAI' : 'NVIDIA';
+    const apiUrl = provider === 'openai' ? OPENAI_URL : NVIDIA_URL;
+    const usedModel = provider === 'openai' ? OPENAI_MODEL : MODEL;
+    const apiKey = provider === 'openai' ? process.env.OPENAI_API_KEY : process.env.NVIDIA_API_KEY;
+    if (!apiKey) {
+      return sendJson(res, 500, {
+        error: `${provider === 'openai' ? 'OPENAI_API_KEY' : 'NVIDIA_API_KEY'} is not set on the server`,
+      });
+    }
+ 
     const [data, news] = await Promise.all([
       getChart(symbol, '3mo'),
       getNews(symbol).catch(() => []),   // news is best-effort; forecast still works without it
@@ -108,9 +118,9 @@ export default async function handler(req, res) {
           return `- [${n.publisher}${age != null ? `, ${age < 24 ? age + 'h' : Math.round(age / 24) + 'd'} ago` : ''}] ${n.title}`;
         }).join('\n') + '\n'
       : '';
-
+ 
     const prompt = `You are an equity analyst. Analyze this stock and give a short-term (1-2 week) outlook.
-
+ 
 Stock: ${data.name} (${data.symbol}), ${data.exchange}, currency ${data.currency}
 Current price: ${stats.last}
 Performance: 1w ${stats.change1w}%, 1m ${stats.change1m}%, 3m ${stats.change3m}%
@@ -118,12 +128,12 @@ Performance: 1w ${stats.change1w}%, 1m ${stats.change1m}%, 3m ${stats.change3m}%
 Daily volatility: ${stats.dailyVolPct}%
 3-month range: ${stats.low3m} - ${stats.high3m}
 52-week range: ${stats.fiftyTwoWeekLow} - ${stats.fiftyTwoWeekHigh}
-
+ 
 Last 30 daily closes:
 ${recent}
 ${newsBlock}
 Weigh both the price action AND the news headlines in your analysis. If a headline is significant (earnings, guidance, regulation, M&A), let it influence the outlook and predictions.
-
+ 
 Respond with ONLY a JSON object, no other text:
 {
   "outlook": "bullish" | "bearish" | "neutral",
@@ -141,7 +151,7 @@ Respond with ONLY a JSON object, no other text:
   ]
 }
 The predicted low/high band should widen with the horizon, consistent with the stock's daily volatility of ${stats.dailyVolPct}%. Keep predictions realistic — small daily moves anchored to the current price and trend.`;
-
+ 
     // Nemotron 3 Super is a REASONING model: by default it generates a long
     // hidden thinking trace before the answer, which on the free shared
     // endpoint regularly takes 40s+ and blows the serverless time limit.
@@ -151,6 +161,17 @@ The predicted low/high band should widen with the horizon, consistent with the s
     // time budget so WE always answer clean JSON before the platform kills
     // the function (a platform timeout sends the browser an HTML error page).
     const makeBody = (mode) => {
+      if (provider === 'openai') {
+        // GPT-5-family models: use max_completion_tokens, leave sampling params
+        // at defaults (non-default temperature is rejected by reasoning models).
+        const body = {
+          model: OPENAI_MODEL,
+          messages: [{ role: 'user', content: prompt }],
+          max_completion_tokens: 4096,
+        };
+        if (mode === 'effort') body.reasoning_effort = process.env.OPENAI_REASONING || 'low';
+        return body;                           // 'plain' = no reasoning params (for non-reasoning models)
+      }
       const body = {
         model: MODEL,
         messages: [{ role: 'user', content: prompt }],
@@ -168,10 +189,12 @@ The predicted low/high band should widen with the horizon, consistent with the s
       }
       return body;                             // 'plain' = no reasoning-control params
     };
-    const PLAN = process.env.NVIDIA_THINKING === 'off' ? ['fast', 'plain']
-               : process.env.NVIDIA_THINKING === 'full' ? ['plain']
-               : ['budget', 'fast', 'plain'];
-
+    const PLAN = provider === 'openai'
+      ? ['effort', 'plain']
+      : process.env.NVIDIA_THINKING === 'off' ? ['fast', 'plain']
+      : process.env.NVIDIA_THINKING === 'full' ? ['plain']
+      : ['budget', 'fast', 'plain'];
+ 
     const TOTAL_BUDGET_MS = 50_000;   // stay under vercel.json maxDuration (60s)
     const started = Date.now();
     let r = null, errText = '', timedOut = false;
@@ -179,7 +202,7 @@ The predicted low/high band should widen with the horizon, consistent with the s
       const remaining = TOTAL_BUDGET_MS - (Date.now() - started);
       if (remaining < 8_000) { timedOut = true; break; }  // not enough time left for a real attempt
       try {
-        r = await fetch(NVIDIA_URL, {
+        r = await fetch(apiUrl, {
           method: 'POST',
           headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify(makeBody(mode)),
@@ -199,17 +222,17 @@ The predicted low/high band should widen with the horizon, consistent with the s
       }
       break; // real error (bad key, bad model id, …) — don't retry
     }
-
+ 
     if (!r || !r.ok) {
       const busy = r && (r.status === 503 || r.status === 429);
       return sendJson(res, 502, {
         error: !r
           ? (timedOut
-              ? 'The model took too long to respond. This happens when the free endpoint is slow under load — try again.'
-              : 'Could not reach the NVIDIA API. Try again.')
+              ? 'The model took too long to respond — try again.'
+              : `Could not reach the ${providerName} API. Try again.`)
           : busy
-            ? `NVIDIA's free endpoint is at capacity right now (${r.status}). This is temporary — try again in a minute.`
-            : `NVIDIA API ${r.status}: ${errText.slice(0, 300)}`,
+            ? `The ${providerName} endpoint is busy or rate-limited right now (${r.status}). This is temporary — try again in a minute.`
+            : `${providerName} API ${r.status}: ${errText.slice(0, 300)}`,
       });
     }
     const out = await r.json();
@@ -220,14 +243,15 @@ The predicted low/high band should widen with the horizon, consistent with the s
       const lastPoint = data.points[data.points.length - 1];
       parsed.predictions = normalizePredictions(parsed, lastPoint, stats.last);
     }
-
+ 
     sendJson(res, 200, {
       symbol: data.symbol,
       name: data.name,
       currency: data.currency,
       stats,
       newsUsed: news.slice(0, 8).length,
-      model: MODEL,
+      provider,
+      model: usedModel,
       forecast: parsed,
       raw: parsed ? undefined : text.slice(0, 2000),
       generatedAt: Date.now(),
