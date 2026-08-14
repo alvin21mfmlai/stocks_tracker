@@ -16,6 +16,7 @@
     --baseline: #c3c2b7;
     --border: rgba(11,11,11,0.10);
     --series-1: #2a78d6;
+    --series-2: #eb6834;
     --delta-up: #006300;
     --delta-down: #d03b3b;
     --status-good: #0ca30c;
@@ -34,6 +35,7 @@
       --baseline: #383835;
       --border: rgba(255,255,255,0.10);
       --series-1: #3987e5;
+      --series-2: #d95926;
       --delta-up: #0ca30c;
       --delta-down: #d03b3b;
       --wash: rgba(255,255,255,0.06);
@@ -50,6 +52,7 @@
     --baseline: #383835;
     --border: rgba(255,255,255,0.10);
     --series-1: #3987e5;
+    --series-2: #d95926;
     --delta-up: #0ca30c;
     --delta-down: #d03b3b;
     --wash: rgba(255,255,255,0.06);
@@ -132,16 +135,31 @@
     padding: 6px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.14);
     white-space: nowrap;
   }
+  .tooltip.wide { white-space: normal; max-width: 300px; line-height: 1.4; }
   .tooltip .tt-t { color: var(--text-muted); font-size: 11px; }
   .tooltip .tt-v { font-weight: 700; font-variant-numeric: tabular-nums; }
   .chart-msg { padding: 60px 0; text-align: center; color: var(--text-muted); font-size: 13px; }
   .chart-legend { display: flex; gap: 16px; align-items: center; justify-content: flex-end; font-size: 11px; color: var(--text-secondary); padding: 2px 2px 6px; }
   .chart-legend .sw { display: inline-block; width: 16px; height: 0; border-top: 2px solid var(--series-1); margin-right: 5px; vertical-align: middle; }
   .chart-legend .sw.dash { border-top-style: dashed; }
+  .chart-legend .sw.news { border-top: 0; width: 9px; height: 9px; border-radius: 50%; background: var(--series-2); }
+  .chart-legend .sw.cone { border-top: 0; width: 16px; height: 9px; border-radius: 2px; background: var(--series-1); opacity: 0.22; }
   .fc-horizons { display: flex; gap: 4px; margin-top: 6px; }
   .fc-horizons button { border: 1px solid var(--border); background: none; color: var(--text-secondary); font-family: inherit; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
   .fc-horizons button:hover { background: var(--wash); }
   .fc-horizons button.active { border-color: var(--series-1); color: var(--text-primary); }
+
+  /* ---- chart controls ---- */
+  .chart-ctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 14px 0 2px; }
+  .chart-ctl .ranges { margin: 0; }
+  .chips { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
+  .chips button {
+    border: 1px solid var(--border); background: none; color: var(--text-secondary); font-family: inherit;
+    font-size: 11px; font-weight: 600; padding: 4px 9px; border-radius: 6px; cursor: pointer;
+  }
+  .chips button:hover { background: var(--wash); }
+  .chips button.active { border-color: var(--series-1); color: var(--text-primary); background: var(--wash); }
+  .chips .sep { width: 1px; background: var(--border); margin: 2px 4px; }
 
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-top: 14px; }
   .tile { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
@@ -151,7 +169,7 @@
   /* ---- watchlist ---- */
   .side h3 { font-size: 13px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px; }
   .wl-item {
-    display: flex; align-items: center; gap: 10px; width: 100%;
+    display: flex; align-items: center; gap: 8px; width: 100%;
     padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
     background: none; cursor: pointer; font-family: inherit; text-align: left;
     margin-bottom: 8px; color: var(--text-primary);
@@ -159,8 +177,11 @@
   .wl-item:hover { background: var(--wash); }
   .wl-item.active { border-color: var(--series-1); }
   .wl-item .wsym { font-weight: 700; font-size: 13px; }
-  .wl-item .wname { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
-  .wl-item .wpx { margin-left: auto; text-align: right; }
+  .wl-item .winfo { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+  .wl-item .wname { display: block; font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wl-item .spark { flex: 0 0 auto; display: flex; align-items: center; }
+  .wl-item .spark svg { display: block; }
+  .wl-item .wpx { flex: 0 0 auto; text-align: right; }
   .wl-item .wpx .p { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .wl-item .wpx .c { font-size: 11px; font-weight: 600; }
   .wl-item .rm {
@@ -197,6 +218,21 @@
   .news-item:hover { background: var(--wash); }
   .news-item .nt { font-size: 13px; line-height: 1.4; font-weight: 500; }
   .news-item .nm2 { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+  /* ---- track record ---- */
+  .tr-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+  .tr-head h3 { font-size: 13px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; }
+  .tr-head .sub { font-size: 11px; color: var(--text-muted); }
+  .tr-head .clear { margin-left: auto; border: 0; background: none; color: var(--text-muted); font-family: inherit; font-size: 11px; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+  .tr-head .clear:hover { background: var(--wash); color: var(--delta-down); }
+  .tr-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 12px; }
+  .tr-table th { text-align: left; font-size: 11px; font-weight: 600; color: var(--text-muted); padding: 6px 8px; border-bottom: 1px solid var(--grid); }
+  .tr-table td { padding: 7px 8px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+  .tr-table tr:last-child td { border-bottom: 0; }
+  .tr-table td.sym { font-weight: 700; }
+  .bar { position: relative; height: 6px; border-radius: 3px; background: var(--wash); overflow: hidden; min-width: 56px; }
+  .bar > i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--series-1); }
+  .hit { color: var(--delta-up); font-weight: 700; }
+  .miss { color: var(--delta-down); font-weight: 700; }
   .err-banner {
     background: color-mix(in srgb, var(--status-critical) 10%, var(--surface-1));
     border: 1px solid var(--status-critical); color: var(--text-primary);
@@ -234,7 +270,17 @@
             <div class="chg flat" id="qChg">&nbsp;</div>
           </div>
         </div>
-        <div class="ranges" id="ranges" role="tablist"></div>
+        <div class="chart-ctl">
+          <div class="ranges" id="ranges" role="tablist"></div>
+          <div class="chips" id="chartOpts">
+            <button data-t="line" title="Line chart">Line</button>
+            <button data-t="candle" title="Candlestick chart">Candles</button>
+            <span class="sep"></span>
+            <button data-o="vol" title="Show volume bars">Volume</button>
+            <button data-o="cone" title="Volatility probability cone (Monte Carlo)">Cone</button>
+            <button data-o="news" title="Pin news headlines on the timeline">News</button>
+          </div>
+        </div>
         <div class="chart-wrap">
           <div id="chart"></div>
           <div id="tooltip" class="tooltip"></div>
@@ -244,6 +290,14 @@
       <div class="card" style="margin-top:16px">
         <h3 style="font-size:13px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">News</h3>
         <div id="news"><div class="skel">Loading news…</div></div>
+      </div>
+      <div class="card" id="trackCard" style="margin-top:16px; display:none">
+        <div class="tr-head">
+          <h3>Forecast track record</h3>
+          <span class="sub" id="trSub"></span>
+          <button class="clear" id="trClear">Clear history</button>
+        </div>
+        <div id="track"></div>
       </div>
     </div>
 
@@ -296,9 +350,16 @@
   let chartData = null;
   let fc = null;          // {symbol, predictions:[{d,t,price,low,high}]}
   let fcHorizon = 7;      // trading days of forecast shown on the chart
-  const FC_RANGES = ['1mo', '6mo'];  // ranges the forecast overlay draws on
-  const quoteCache = {};   // symbol -> latest stock payload (1d)
+  let mc = null;          // {symbol, range, days:[{d,t,p10,p25,p50,p75,p90}], sigmaPct, n}
+  let newsItems = [];     // headlines for the selected symbol (for chart markers)
+  const FC_RANGES = ['1mo', '6mo'];  // ranges the forecast overlay + cone draw on
+  const wlCache = {};      // symbol -> 1mo payload (watchlist rows + sparklines)
   const RANGES = [['1d','1D'],['5d','5D'],['1mo','1M'],['6mo','6M'],['1y','1Y'],['5y','5Y']];
+
+  // chart display options, remembered per browser
+  const opts = { type: 'line', vol: true, cone: false, news: true };
+  try { Object.assign(opts, JSON.parse(localStorage.getItem('ls_chartopts') || '{}')); } catch {}
+  const saveOpts = () => { try { localStorage.setItem('ls_chartopts', JSON.stringify(opts)); } catch {} };
 
   const saveWl = () => { try { localStorage.setItem('ls_watchlist', JSON.stringify(watchlist)); } catch {} };
 
@@ -358,6 +419,59 @@
     const preds = fc.predictions.slice(0, fcHorizon);
     return preds.length ? preds : null;
   }
+  function activeCone(d) {
+    if (!opts.cone || !mc || mc.symbol !== d.symbol || !FC_RANGES.includes(d.range)) return null;
+    return mc.days;
+  }
+
+  // ---------- Monte Carlo probability cone ----------
+  // Bootstrap future paths by resampling the stock's OWN recent daily returns,
+  // de-meaned so the centre is a flat random walk (the honest naive forecast).
+  // The spread is therefore pure volatility — a baseline to judge the AI line against.
+  function tradingDaysFrom(startTs, n) {
+    const out = [], dt = new Date(startTs);
+    while (out.length < n) {
+      dt.setDate(dt.getDate() + 1);
+      const wd = dt.getDay();
+      if (wd !== 0 && wd !== 6) out.push(dt.getTime());
+    }
+    return out;
+  }
+  function computeCone(d, horizon = 7, sims = 2000) {
+    const pts = d.points || [];
+    if (pts.length < 12) return null;
+    const closes = pts.map((p) => p.c);
+    const rets = [];
+    for (let i = 1; i < closes.length; i++) {
+      const r = Math.log(closes[i] / closes[i - 1]);
+      if (Number.isFinite(r)) rets.push(r);
+    }
+    if (rets.length < 10) return null;
+    const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
+    const cent = rets.map((r) => r - mean);
+    const sigma = Math.sqrt(cent.reduce((a, b) => a + b * b, 0) / Math.max(1, cent.length - 1));
+    const last = closes[closes.length - 1];
+    const cols = Array.from({ length: horizon }, () => new Float64Array(sims));
+    for (let s = 0; s < sims; s++) {
+      let v = last;
+      for (let h = 0; h < horizon; h++) {
+        v *= Math.exp(cent[(Math.random() * cent.length) | 0]);
+        cols[h][s] = v;
+      }
+    }
+    const ts = tradingDaysFrom(pts[pts.length - 1].t, horizon);
+    const q = (col, p) => {
+      const a = Array.from(col).sort((x, y) => x - y);
+      return a[Math.min(a.length - 1, Math.max(0, Math.round(p * (a.length - 1))))];
+    };
+    return {
+      symbol: d.symbol, range: d.range, n: rets.length, sigmaPct: sigma * 100,
+      days: cols.map((col, i) => ({
+        d: i + 1, t: ts[i],
+        p10: q(col, 0.10), p25: q(col, 0.25), p50: q(col, 0.50), p75: q(col, 0.75), p90: q(col, 0.90),
+      })),
+    };
+  }
 
   function renderChart(d) {
     chartData = d;
@@ -365,29 +479,45 @@
     const pts = d.points;
     if (!pts || pts.length < 2) { host.innerHTML = '<div class="chart-msg">No chart data for this range.</div>'; return; }
     const preds = activeOverlay(d);
+    const cone = activeCone(d);
+    const candles = opts.type === 'candle';
+    const hasVol = pts.some((p) => p.v > 0);
+    const showVol = opts.vol && hasVol;
 
-    const W = host.clientWidth || 640, H = 320;
+    // --- geometry: price panel on top, optional volume panel below ---
+    const W = host.clientWidth || 640;
     const pad = { l: 8, r: 56, t: 14, b: 26 };
-    const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+    const volH = showVol ? 46 : 0, volGap = showVol ? 10 : 0;
+    const H = 320 + volH + volGap;
+    const iw = W - pad.l - pad.r;
+    const ih = H - pad.t - pad.b - volH - volGap;
+    const volTop = pad.t + ih + volGap;
 
-    let lo = Math.min(...pts.map(p => p.c)), hi = Math.max(...pts.map(p => p.c));
+    // --- scales ---
+    let lo = Infinity, hi = -Infinity;
+    for (const p of pts) {
+      lo = Math.min(lo, candles ? (p.l ?? p.c) : p.c);
+      hi = Math.max(hi, candles ? (p.h ?? p.c) : p.c);
+    }
     if (d.range === '1d' && d.prevClose != null) { lo = Math.min(lo, d.prevClose); hi = Math.max(hi, d.prevClose); }
     if (preds) for (const p of preds) { lo = Math.min(lo, p.low ?? p.price); hi = Math.max(hi, p.high ?? p.price); }
+    if (cone) for (const c of cone) { lo = Math.min(lo, c.p10); hi = Math.max(hi, c.p90); }
     const padY = (hi - lo) * 0.08 || hi * 0.01 || 1;
     lo -= padY; hi += padY;
 
     const t0 = pts[0].t, tEnd = pts[pts.length - 1].t;
-    const t1 = preds ? preds[preds.length - 1].t : tEnd;
+    const futureEnd = Math.max(preds ? preds[preds.length - 1].t : 0, cone ? cone[cone.length - 1].t : 0);
+    const t1 = futureEnd || tEnd;
     const x = (t) => pad.l + ((t - t0) / (t1 - t0 || 1)) * iw;
     const y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * ih;
 
-    // y ticks
-    const nTicks = 4, ticks = [];
-    for (let i = 0; i <= nTicks; i++) ticks.push(lo + (i / nTicks) * (hi - lo));
+    const stepPx = iw * ((tEnd - t0) / (t1 - t0 || 1)) / Math.max(1, pts.length);
+    const cw = Math.max(1, Math.min(15, stepPx * 0.62));
 
-    // x labels
-    const nx = Math.min(5, pts.length);
-    const xlabs = [];
+    const ticks = [];
+    for (let i = 0; i <= 4; i++) ticks.push(lo + (i / 4) * (hi - lo));
+
+    const nx = Math.min(5, pts.length), xlabs = [];
     for (let i = 0; i < nx; i++) {
       const p = pts[Math.round((i / (nx - 1)) * (pts.length - 1))];
       const dt = new Date(p.t);
@@ -397,13 +527,29 @@
         : dt.toLocaleDateString([], { month: 'short', day: 'numeric' }) });
     }
 
-    const line = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.c).toFixed(1)}`).join('');
-    const area = `${line}L${x(tEnd).toFixed(1)},${(pad.t + ih).toFixed(1)}L${x(t0).toFixed(1)},${(pad.t + ih).toFixed(1)}Z`;
+    // --- news markers, clustered so nearby headlines share one pin ---
+    const marks = [];
+    if (opts.news && newsItems.length) {
+      const inRange = newsItems
+        .filter((n) => n.publishedAt && n.publishedAt >= t0 && n.publishedAt <= tEnd)
+        .sort((a, b) => a.publishedAt - b.publishedAt);
+      for (const n of inRange) {
+        let near = pts[0], bd = Infinity;
+        for (const p of pts) { const dd = Math.abs(p.t - n.publishedAt); if (dd < bd) { bd = dd; near = p; } }
+        const last = marks[marks.length - 1];
+        if (last && Math.abs(x(n.publishedAt) - x(last.t)) < 16) last.items.push(n);
+        else marks.push({ t: n.publishedAt, price: near.c, items: [n] });
+      }
+    }
 
-    const grid = cssVar('--grid'), baseline = cssVar('--baseline'), muted = cssVar('--text-muted'), series = cssVar('--series-1');
+    const grid = cssVar('--grid'), baseline = cssVar('--baseline'), muted = cssVar('--text-muted');
+    const series = cssVar('--series-1'), accent = cssVar('--series-2'), surface = cssVar('--surface-1');
+    const upC = cssVar('--delta-up'), downC = cssVar('--delta-down');
+
     let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Price chart for ${d.symbol}">`;
     svg += `<defs><linearGradient id="ag" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="${series}" stop-opacity="0.14"/><stop offset="1" stop-color="${series}" stop-opacity="0"/></linearGradient></defs>`;
+
     for (const tv of ticks) {
       const yy = y(tv).toFixed(1);
       svg += `<line x1="${pad.l}" x2="${pad.l + iw}" y1="${yy}" y2="${yy}" stroke="${grid}" stroke-width="1"/>`;
@@ -411,38 +557,120 @@
     }
     if (d.range === '1d' && d.prevClose != null)
       svg += `<line x1="${pad.l}" x2="${pad.l + iw}" y1="${y(d.prevClose).toFixed(1)}" y2="${y(d.prevClose).toFixed(1)}" stroke="${baseline}" stroke-width="1" stroke-dasharray="3 4"/>`;
-    svg += `<path d="${area}" fill="url(#ag)"/>`;
-    svg += `<path d="${line}" fill="none" stroke="${series}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+
+    // --- probability cone (drawn first, behind everything) ---
+    if (cone) {
+      const lastC = pts[pts.length - 1].c;
+      const seed = { t: tEnd, p10: lastC, p25: lastC, p50: lastC, p75: lastC, p90: lastC };
+      const band = (loK, hiK, op) => {
+        const arr = [seed, ...cone];
+        const top = arr.map((c, i) => `${i ? 'L' : 'M'}${x(c.t).toFixed(1)},${y(c[hiK]).toFixed(1)}`).join('');
+        const bot = [...arr].reverse().map((c) => `L${x(c.t).toFixed(1)},${y(c[loK]).toFixed(1)}`).join('');
+        return `<path d="${top}${bot}Z" fill="${series}" fill-opacity="${op}"/>`;
+      };
+      svg += band('p10', 'p90', 0.10);
+      svg += band('p25', 'p75', 0.14);
+      // median path — with drift removed this is flat, i.e. the naive "no news
+      // is good news" forecast the AI line should be judged against
+      const mid = [seed, ...cone].map((c, i) => `${i ? 'L' : 'M'}${x(c.t).toFixed(1)},${y(c.p50).toFixed(1)}`).join('');
+      svg += `<path d="${mid}" fill="none" stroke="${muted}" stroke-width="1" stroke-dasharray="2 3"/>`;
+    }
+
+    // --- price marks ---
+    if (candles) {
+      for (const p of pts) {
+        const cx = x(p.t), o = p.o ?? p.c, h = p.h ?? p.c, l = p.l ?? p.c;
+        const up = p.c >= o, col = up ? upC : downC;
+        svg += `<line x1="${cx.toFixed(1)}" x2="${cx.toFixed(1)}" y1="${y(h).toFixed(1)}" y2="${y(l).toFixed(1)}" stroke="${col}" stroke-width="1"/>`;
+        const yo = y(o), yc = y(p.c);
+        svg += `<rect x="${(cx - cw / 2).toFixed(1)}" y="${Math.min(yo, yc).toFixed(1)}" width="${cw.toFixed(1)}" height="${Math.max(1, Math.abs(yc - yo)).toFixed(1)}" fill="${col}" rx="${cw > 4 ? 1 : 0}"/>`;
+      }
+    } else {
+      const line = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.c).toFixed(1)}`).join('');
+      const area = `${line}L${x(tEnd).toFixed(1)},${(pad.t + ih).toFixed(1)}L${x(t0).toFixed(1)},${(pad.t + ih).toFixed(1)}Z`;
+      svg += `<path d="${area}" fill="url(#ag)"/>`;
+      svg += `<path d="${line}" fill="none" stroke="${series}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    }
+
+    // --- volume panel ---
+    if (showVol) {
+      const maxV = Math.max(...pts.map((p) => p.v || 0)) || 1;
+      svg += `<line x1="${pad.l}" x2="${pad.l + iw}" y1="${volTop + volH}" y2="${volTop + volH}" stroke="${grid}" stroke-width="1"/>`;
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i], v = p.v || 0;
+        if (!v) continue;
+        const bh = Math.max(1, (v / maxV) * (volH - 4));
+        const prev = i ? pts[i - 1].c : p.c;
+        const col = p.c >= (p.o ?? prev) ? upC : downC;
+        svg += `<rect x="${(x(p.t) - cw / 2).toFixed(1)}" y="${(volTop + volH - bh).toFixed(1)}" width="${cw.toFixed(1)}" height="${bh.toFixed(1)}" fill="${col}" fill-opacity="0.32"/>`;
+      }
+      svg += `<text x="${pad.l}" y="${volTop + 10}" font-size="10" fill="${muted}">Volume</text>`;
+    }
+
+    // --- AI forecast overlay ---
     if (preds) {
       const lastC = pts[pts.length - 1].c;
       const fpts = [{ t: tEnd, price: lastC, low: lastC, high: lastC }, ...preds];
-      const bandTop = fpts.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.high ?? p.price).toFixed(1)}`).join('');
-      const bandBot = [...fpts].reverse().map((p) => `L${x(p.t).toFixed(1)},${y(p.low ?? p.price).toFixed(1)}`).join('');
-      svg += `<path d="${bandTop}${bandBot}Z" fill="${series}" fill-opacity="0.10"/>`;
+      // The AI's own band is hidden while the cone is shown — two overlapping
+      // blue bands read as one blob. Cone = statistical spread, dashed = the call.
+      if (!cone) {
+        const bandTop = fpts.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.high ?? p.price).toFixed(1)}`).join('');
+        const bandBot = [...fpts].reverse().map((p) => `L${x(p.t).toFixed(1)},${y(p.low ?? p.price).toFixed(1)}`).join('');
+        svg += `<path d="${bandTop}${bandBot}Z" fill="${series}" fill-opacity="0.10"/>`;
+      }
       const fline = fpts.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.price).toFixed(1)}`).join('');
       svg += `<path d="${fline}" fill="none" stroke="${series}" stroke-width="2" stroke-dasharray="5 5" stroke-linejoin="round" stroke-linecap="round"/>`;
       for (const p of preds)
-        svg += `<circle cx="${x(p.t).toFixed(1)}" cy="${y(p.price).toFixed(1)}" r="3.5" fill="${series}" stroke="${cssVar('--surface-1')}" stroke-width="1.5"/>`;
-      svg += `<line x1="${x(tEnd).toFixed(1)}" x2="${x(tEnd).toFixed(1)}" y1="${pad.t}" y2="${pad.t + ih}" stroke="${baseline}" stroke-width="1" stroke-dasharray="2 3"/>`;
+        svg += `<circle cx="${x(p.t).toFixed(1)}" cy="${y(p.price).toFixed(1)}" r="3.5" fill="${series}" stroke="${surface}" stroke-width="1.5"/>`;
     }
+    if (preds || cone)
+      svg += `<line x1="${x(tEnd).toFixed(1)}" x2="${x(tEnd).toFixed(1)}" y1="${pad.t}" y2="${pad.t + ih}" stroke="${baseline}" stroke-width="1" stroke-dasharray="2 3"/>`;
+
     xlabs.forEach((xl, i) => {
       const anchor = i === 0 ? 'start' : i === xlabs.length - 1 ? 'end' : 'middle';
       svg += `<text x="${xl.x.toFixed(1)}" y="${H - 8}" font-size="11" fill="${muted}" text-anchor="${anchor}">${xl.text}</text>`;
     });
-    svg += `<line id="xh" x1="0" x2="0" y1="${pad.t}" y2="${pad.t + ih}" stroke="${baseline}" stroke-width="1" visibility="hidden"/>`;
-    svg += `<circle id="xdot" r="4" fill="${series}" stroke="${cssVar('--surface-1')}" stroke-width="2" visibility="hidden"/>`;
-    svg += `<rect id="hover" x="${pad.l}" y="${pad.t}" width="${iw}" height="${ih}" fill="transparent"/>`;
-    svg += `</svg>`;
-    const legend = preds
-      ? `<div class="chart-legend"><span><span class="sw"></span>History</span><span><span class="sw dash"></span>AI forecast (${preds.length} trading day${preds.length > 1 ? 's' : ''})</span></div>`
-      : '';
-    host.innerHTML = legend + svg;
 
-    // hover interactions
+    svg += `<line id="xh" x1="0" x2="0" y1="${pad.t}" y2="${pad.t + ih}" stroke="${baseline}" stroke-width="1" visibility="hidden"/>`;
+    svg += `<circle id="xdot" r="4" fill="${series}" stroke="${surface}" stroke-width="2" visibility="hidden"/>`;
+    svg += `<rect id="hover" x="${pad.l}" y="${pad.t}" width="${iw}" height="${ih}" fill="transparent"/>`;
+
+    // --- news pins (last, so they sit above the hover layer) ---
+    marks.forEach((m, i) => {
+      const cx = x(m.t), py = y(m.price);
+      const my = Math.max(pad.t + 8, py - 14);
+      const n = m.items.length, r = n > 1 ? 8 : 5;
+      svg += `<line x1="${cx.toFixed(1)}" x2="${cx.toFixed(1)}" y1="${(my + r).toFixed(1)}" y2="${py.toFixed(1)}" stroke="${accent}" stroke-width="1" stroke-opacity="0.5"/>`;
+      svg += `<g class="nmark" data-i="${i}" style="cursor:pointer">
+        <circle cx="${cx.toFixed(1)}" cy="${my.toFixed(1)}" r="${r}" fill="${accent}" stroke="${surface}" stroke-width="1.5"/>
+        ${n > 1 ? `<text x="${cx.toFixed(1)}" y="${(my + 3.5).toFixed(1)}" font-size="10" font-weight="700" fill="${surface}" text-anchor="middle">${n}</text>` : ''}
+      </g>`;
+    });
+    svg += `</svg>`;
+
+    // --- legend ---
+    const leg = [`<span><span class="sw"></span>${candles ? 'Price' : 'History'}</span>`];
+    if (preds) leg.push(`<span><span class="sw dash"></span>AI forecast (${preds.length}d)</span>`);
+    if (cone) leg.push(`<span><span class="sw cone"></span>Volatility cone (50/80%)</span>`);
+    if (marks.length) leg.push(`<span><span class="sw news"></span>News</span>`);
+    host.innerHTML = (leg.length > 1 ? `<div class="chart-legend">${leg.join('')}</div>` : '') + svg;
+
+    // --- interactions ---
     const svgEl = host.querySelector('svg');
     const xh = svgEl.querySelector('#xh'), dot = svgEl.querySelector('#xdot'), hover = svgEl.querySelector('#hover');
     const tt = $('tooltip');
-    const all = pts.map((p) => ({ t: p.t, c: p.c }));
+    const wrapRect = () => host.parentElement.getBoundingClientRect();
+    const place = (px, py, wide) => {
+      tt.classList.toggle('wide', !!wide);
+      tt.style.display = 'block';
+      const wr = wrapRect(), sr = svgEl.getBoundingClientRect();
+      const left = sr.left - wr.left + (px / W) * sr.width;
+      const top = sr.top - wr.top + (py / H) * sr.height;
+      tt.style.left = Math.min(wr.width - tt.offsetWidth - 4, Math.max(4, left + 12)) + 'px';
+      tt.style.top = Math.max(0, top - tt.offsetHeight - 12) + 'px';
+    };
+
+    const all = pts.map((p) => ({ t: p.t, c: p.c, o: p.o, h: p.h, l: p.l, v: p.v }));
     if (preds) for (const p of preds) all.push({ t: p.t, c: p.price, lo: p.low, hi: p.high, f: true });
     const move = (ev) => {
       const rect = svgEl.getBoundingClientRect();
@@ -457,21 +685,56 @@
       const when = d.range === '1d' ? dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         : dt.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
       const cur = d.currency ? d.currency + ' ' : '';
-      tt.innerHTML = p.f
-        ? `<div class="tt-t">${when} · AI forecast</div><div class="tt-v">${cur}${fmt(p.c)}</div><div class="tt-t">range ${fmt(p.lo)} – ${fmt(p.hi)}</div>`
-        : `<div class="tt-t">${when}</div><div class="tt-v">${cur}${fmt(p.c)}</div>`;
-      tt.style.display = 'block';
-      const wrapRect = host.parentElement.getBoundingClientRect();
-      const svgRect = svgEl.getBoundingClientRect();
-      const left = svgRect.left - wrapRect.left + (px / W) * svgRect.width;
-      const top = svgRect.top - wrapRect.top + (py / H) * svgRect.height;
-      tt.style.left = Math.min(wrapRect.width - tt.offsetWidth - 4, Math.max(4, left + 12)) + 'px';
-      tt.style.top = Math.max(0, top - tt.offsetHeight - 12) + 'px';
+      if (p.f) {
+        tt.innerHTML = `<div class="tt-t">${when} · AI forecast</div><div class="tt-v">${cur}${fmt(p.c)}</div><div class="tt-t">range ${fmt(p.lo)} – ${fmt(p.hi)}</div>`;
+      } else if (candles && p.o != null) {
+        tt.innerHTML = `<div class="tt-t">${when}</div><div class="tt-v">${cur}${fmt(p.c)}</div>
+          <div class="tt-t">O ${fmt(p.o)} · H ${fmt(p.h)} · L ${fmt(p.l)}</div>
+          ${p.v ? `<div class="tt-t">Vol ${Intl.NumberFormat(undefined, { notation: 'compact' }).format(p.v)}</div>` : ''}`;
+      } else {
+        tt.innerHTML = `<div class="tt-t">${when}</div><div class="tt-v">${cur}${fmt(p.c)}</div>
+          ${showVol && p.v ? `<div class="tt-t">Vol ${Intl.NumberFormat(undefined, { notation: 'compact' }).format(p.v)}</div>` : ''}`;
+      }
+      place(px, py, false);
     };
     const leave = () => { xh.setAttribute('visibility', 'hidden'); dot.setAttribute('visibility', 'hidden'); tt.style.display = 'none'; };
     hover.addEventListener('mousemove', move);
     hover.addEventListener('mouseleave', leave);
+
+    svgEl.querySelectorAll('.nmark').forEach((g) => {
+      const m = marks[+g.dataset.i];
+      g.addEventListener('mouseenter', () => {
+        leave();
+        const head = m.items.slice(0, 3).map((n) =>
+          `<div style="margin-top:4px"><div class="tt-v" style="font-weight:600;font-size:12px">${esc(n.title)}</div>
+           <div class="tt-t">${esc(n.publisher)} · ${relTime(n.publishedAt)}</div></div>`).join('');
+        const more = m.items.length > 3 ? `<div class="tt-t" style="margin-top:4px">+${m.items.length - 3} more</div>` : '';
+        tt.innerHTML = head + more + `<div class="tt-t" style="margin-top:6px">Click to open ↗</div>`;
+        place(x(m.t), Math.max(pad.t + 8, y(m.price) - 14), true);
+      });
+      g.addEventListener('mouseleave', () => { tt.style.display = 'none'; tt.classList.remove('wide'); });
+      g.addEventListener('click', () => { if (m.items[0].link) window.open(m.items[0].link, '_blank', 'noopener'); });
+    });
   }
+
+  // ---------- chart option chips ----------
+  function paintOpts() {
+    $('chartOpts').querySelectorAll('button').forEach((b) => {
+      if (b.dataset.t) b.classList.toggle('active', opts.type === b.dataset.t);
+      else b.classList.toggle('active', !!opts[b.dataset.o]);
+    });
+  }
+  $('chartOpts').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.t) opts.type = b.dataset.t;
+    else opts[b.dataset.o] = !opts[b.dataset.o];
+    saveOpts(); paintOpts();
+    // the cone needs daily bars — hop to a range that has them
+    if (b.dataset.o === 'cone' && opts.cone && !FC_RANGES.includes(range)) {
+      range = '1mo'; renderRanges(); loadSelected(); return;
+    }
+    if (chartData) renderChart(chartData);
+  });
 
   // ---------- ranges ----------
   function renderRanges() {
@@ -484,15 +747,36 @@
   });
 
   // ---------- watchlist ----------
+  // Tiny inline trend line for a watchlist row — shape, not precision.
+  function sparkline(points, up) {
+    if (!points || points.length < 2) return '';
+    const w = 52, h = 18, vals = points.map((p) => p.c);
+    const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || 1;
+    const col = up ? cssVar('--delta-up') : cssVar('--delta-down');
+    const dPath = vals.map((v, i) =>
+      `${i ? 'L' : 'M'}${(i / (vals.length - 1) * (w - 2) + 1).toFixed(1)},${(h - 2 - ((v - lo) / span) * (h - 4)).toFixed(1)}`).join('');
+    return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">
+      <path d="${dPath}" fill="none" stroke="${col}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+  }
+
   function renderWatchlist() {
     $('watchlist').innerHTML = watchlist.map((s) => {
-      const q = quoteCache[s];
-      const chg = q && q.price != null && q.prevClose ? q.price - q.prevClose : null;
-      const pc = chg != null ? (chg / q.prevClose) * 100 : null;
+      const q = wlCache[s];
+      const pts = q && q.points ? q.points.slice(-30) : null;
+      // Day change straight from the series: last close vs the one before it.
+      let chg = null, pc = null;
+      if (pts && pts.length >= 2) {
+        const a = pts[pts.length - 2].c, b = pts[pts.length - 1].c;
+        chg = b - a; pc = (chg / a) * 100;
+      } else if (q && q.price != null && q.prevClose) {
+        chg = q.price - q.prevClose; pc = (chg / q.prevClose) * 100;
+      }
       const cls = chg == null ? 'flat' : chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat';
       const arrow = chg == null ? '' : chg > 0 ? '▲ ' : chg < 0 ? '▼ ' : '';
+      const trendUp = pts && pts.length >= 2 ? pts[pts.length - 1].c >= pts[0].c : true;
       return `<button class="wl-item ${s === selected ? 'active' : ''}" data-s="${s}">
-        <span><span class="wsym">${s}</span><br><span class="wname">${q ? q.name : '…'}</span></span>
+        <span class="winfo"><span class="wsym">${s}</span><span class="wname">${q ? esc(q.name) : '…'}</span></span>
+        <span class="spark">${sparkline(pts, trendUp)}</span>
         <span class="wpx"><span class="p">${q ? fmt(q.price) : '—'}</span><br>
         <span class="c chg ${cls}">${chg == null ? '' : arrow + fmt(Math.abs(pc)) + '%'}</span></span>
         <span class="rm" data-rm="${s}" title="Remove" aria-label="Remove ${s}">✕</span>
@@ -514,8 +798,9 @@
   });
 
   async function refreshWatchlistQuotes() {
+    // 1mo of daily bars powers both the price/change and the row sparkline.
     await Promise.all(watchlist.map(async (s) => {
-      try { quoteCache[s] = await api(`/api/stock?symbol=${encodeURIComponent(s)}&range=1d`); } catch {}
+      try { wlCache[s] = await api(`/api/stock?symbol=${encodeURIComponent(s)}&range=1mo`); } catch {}
     }));
     renderWatchlist();
   }
@@ -559,9 +844,12 @@
   async function loadNews() {
     if (!selected) return;
     const sym = selected;
+    newsItems = [];   // drop the previous symbol's markers immediately
     try {
       const { news } = await api(`/api/news?symbol=${encodeURIComponent(sym)}`);
       if (sym !== selected) return; // user switched stocks mid-fetch
+      newsItems = news;
+      if (chartData && chartData.symbol === sym) renderChart(chartData);
       $('news').innerHTML = news.length
         ? news.map((n) => `<a class="news-item" href="${esc(n.link)}" target="_blank" rel="noopener">
             <div class="nt">${esc(n.title)}</div>
@@ -611,6 +899,7 @@
       }
       if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
       renderForecast(j);
+      logForecast(j);
       fc = (j.forecast && Array.isArray(j.forecast.predictions) && j.forecast.predictions.length)
         ? { symbol: j.symbol, predictions: j.forecast.predictions } : null;
       if (fc && !FC_RANGES.includes(range)) { range = '1mo'; renderRanges(); loadSelected(); }
@@ -658,13 +947,156 @@
     if (chartData) renderChart(chartData);
   });
 
+  // ---------- forecast track record ----------
+  // Every forecast is logged locally, then scored against what actually
+  // happened. This is the only honest way to know whether to trust the model.
+  const FCLOG = 'ls_fclog';
+  const readLog = () => { try { return JSON.parse(localStorage.getItem(FCLOG) || '[]'); } catch { return []; } };
+  const writeLog = (l) => { try { localStorage.setItem(FCLOG, JSON.stringify(l.slice(-60))); } catch {} };
+
+  function logForecast(j) {
+    const f = j && j.forecast;
+    if (!f || !Array.isArray(f.predictions) || !f.predictions.length) return;
+    const base = j.stats && j.stats.last != null ? j.stats.last : null;
+    if (base == null) return;
+    const log = readLog();
+    log.push({
+      symbol: j.symbol, name: j.name || j.symbol,
+      provider: j.provider || 'nvidia', model: j.model || '',
+      at: j.generatedAt || Date.now(), base, outlook: f.outlook || 'neutral',
+      predictions: f.predictions.map((p) => ({ d: p.d, t: p.t, price: p.price, low: p.low, high: p.high })),
+    });
+    writeLog(log);
+    renderTrack();
+  }
+
+  const actualsCache = {};
+  async function getActuals(symbol) {
+    if (!actualsCache[symbol]) {
+      const d = await api(`/api/stock?symbol=${encodeURIComponent(symbol)}&range=6mo`);
+      actualsCache[symbol] = d.points || [];
+    }
+    return actualsCache[symbol];
+  }
+  const median = (a) => {
+    if (!a.length) return null;
+    const s = [...a].sort((x, y) => x - y), m = s.length >> 1;
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  };
+
+  async function renderTrack() {
+    const log = readLog();
+    const card = $('trackCard');
+    if (!log.length) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    const box = $('track');
+    if (!box.innerHTML) box.innerHTML = '<div class="skel">Scoring past forecasts against actual closes…</div>';
+
+    const actuals = {};
+    await Promise.all([...new Set(log.map((e) => e.symbol))].map(async (s) => {
+      try { actuals[s] = await getActuals(s); } catch { actuals[s] = []; }
+    }));
+
+    const DAY = 864e5;
+    const buckets = { '1d': [1, 1], '2–3d': [2, 3], '4–5d': [4, 5], '6–7d': [6, 7] };
+    const byBucket = {}; Object.keys(buckets).forEach((k) => byBucket[k] = { err: [], dir: 0, n: 0 });
+    const allErr = [];
+    let dirHit = 0, dirN = 0, bandHit = 0, bandN = 0, scored = 0, pending = 0;
+    const rows = [];
+
+    for (const e of log) {
+      const pts = actuals[e.symbol] || [];
+      const marks = [];
+      for (const p of e.predictions) {
+        let best = null, bd = Infinity;
+        for (const a of pts) { const dd = Math.abs(a.t - p.t); if (dd < bd) { bd = dd; best = a; } }
+        if (!best || bd > 2.5 * DAY || best.t <= e.at) continue;   // not resolved yet
+        const err = Math.abs(p.price - best.c) / best.c * 100;
+        const moved = best.c - e.base, called = p.price - e.base;
+        const dirOK = Math.abs(moved) < 1e-9 ? null : (called >= 0) === (moved >= 0);
+        const band = (p.low != null && p.high != null) ? (best.c >= p.low && best.c <= p.high) : null;
+        marks.push({ d: p.d, pred: p.price, actual: best.c, err, dirOK, band });
+      }
+      if (!marks.length) { pending++; continue; }
+      scored++;
+      for (const m of marks) {
+        allErr.push(m.err);
+        if (m.dirOK !== null) { dirN++; if (m.dirOK) dirHit++; }
+        if (m.band !== null) { bandN++; if (m.band) bandHit++; }
+        for (const [k, [a, b]] of Object.entries(buckets)) {
+          if (m.d >= a && m.d <= b) {
+            byBucket[k].err.push(m.err); byBucket[k].n++;
+            if (m.dirOK) byBucket[k].dir++;
+          }
+        }
+      }
+      const last = marks[marks.length - 1];
+      rows.push({ ...e, last, n: marks.length });
+    }
+
+    $('trSub').textContent = `${scored} scored · ${pending} awaiting outcome`;
+
+    if (!scored) {
+      box.innerHTML = `<div class="skel">${pending} forecast${pending > 1 ? 's' : ''} logged — none have reached their target dates yet.
+        Come back after the next trading day and this panel will score them against what actually happened.</div>`;
+      return;
+    }
+
+    const tiles = [
+      ['Forecasts scored', String(scored)],
+      ['Direction correct', dirN ? `${Math.round(dirHit / dirN * 100)}%` : '—'],
+      ['Median price error', `${fmt(median(allErr))}%`],
+      ['Inside predicted band', bandN ? `${Math.round(bandHit / bandN * 100)}%` : '—'],
+    ].map(([k, v]) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+
+    const bucketRows = Object.entries(byBucket).filter(([, b]) => b.n).map(([k, b]) => {
+      const acc = Math.round(b.dir / b.n * 100);
+      return `<tr><td>${k}</td><td>${b.n}</td><td>${fmt(median(b.err))}%</td>
+        <td><div class="bar" title="${acc}% correct"><i style="width:${acc}%"></i></div></td>
+        <td>${acc}%</td></tr>`;
+    }).join('');
+
+    const recent = rows.slice(-8).reverse().map((r) => {
+      const hit = r.last.dirOK;
+      return `<tr>
+        <td class="sym">${esc(r.symbol)}</td>
+        <td>${new Date(r.at).toLocaleDateString([], { month: 'short', day: 'numeric' })}</td>
+        <td>${esc(String(r.model).split('/').pop() || r.provider)}</td>
+        <td>${fmt(r.last.pred)}</td>
+        <td>${fmt(r.last.actual)}</td>
+        <td>${fmt(r.last.err)}%</td>
+        <td class="${hit ? 'hit' : hit === false ? 'miss' : ''}">${hit ? '✓' : hit === false ? '✗' : '–'}</td>
+      </tr>`;
+    }).join('');
+
+    box.innerHTML = `
+      <div class="tiles" style="margin-top:0">${tiles}</div>
+      <table class="tr-table">
+        <thead><tr><th>Horizon</th><th>n</th><th>Median error</th><th style="width:90px">Direction</th><th></th></tr></thead>
+        <tbody>${bucketRows}</tbody>
+      </table>
+      <table class="tr-table">
+        <thead><tr><th>Stock</th><th>Made</th><th>Model</th><th>Predicted</th><th>Actual</th><th>Error</th><th>Dir</th></tr></thead>
+        <tbody>${recent}</tbody>
+      </table>
+      <div class="fc-note">"Predicted" and "Actual" compare the furthest resolved day of each forecast.
+        Direction = did the model call the move from its starting price the right way.</div>`;
+  }
+
+  $('trClear').addEventListener('click', () => {
+    if (!confirm('Delete all logged forecasts and their scores?')) return;
+    try { localStorage.removeItem(FCLOG); } catch {}
+    $('track').innerHTML = ''; $('trackCard').style.display = 'none';
+  });
+
   // ---------- load & refresh ----------
   async function loadSelected() {
     if (!selected) return;
     try {
       const d = await api(`/api/stock?symbol=${encodeURIComponent(selected)}&range=${range}`);
-      if (d.symbol !== selected && !selected.includes(d.symbol)) { /* keep whatever came back */ }
-      quoteCache[selected] = range === '1d' ? d : quoteCache[selected];
+      // Recompute the volatility cone whenever the underlying series changes,
+      // so it stays stable across re-renders (resize, theme, horizon toggles).
+      mc = FC_RANGES.includes(d.range) ? computeCone(d) : null;
       renderQuote(d); renderChart(d);
     } catch (e) {
       $('chart').innerHTML = `<div class="chart-msg">Could not load ${esc(selected)}: ${esc(e.message)}</div>`;
@@ -676,8 +1108,8 @@
   setInterval(() => { loadSelected(); refreshWatchlistQuotes(); }, 60000);
   setInterval(loadNews, 300000);  // news refreshes every 5 minutes
 
-  renderRanges(); renderWatchlist();
-  loadSelected(); refreshWatchlistQuotes(); loadNews();
+  renderRanges(); renderWatchlist(); paintOpts();
+  loadSelected(); refreshWatchlistQuotes(); loadNews(); renderTrack();
 })();
 </script>
 </body>
