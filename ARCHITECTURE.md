@@ -77,10 +77,16 @@ change the variables — the rest of the CSS only references roles like
 collapsing to one column under 900px).
 
 **JS state** (top of the script): `watchlist` (persisted to localStorage key
-`ls_watchlist`; `DEFAULTS` only seed fresh browsers), `selected` (current
-symbol), `range`, `chartData` (last loaded series), `quoteCache` (per-symbol 1d
-quotes for the sidebar), `fc` + `fcHorizon` (forecast predictions and how many
-days are drawn), `FC_RANGES` (which ranges show the overlay).
+`ls_watchlist`; new `DEFAULTS` entries merge in via the `ls_seeded` key),
+`selected` (current symbol), `range`, `chartData` (last loaded series),
+`wlCache` (per-symbol 1-month series powering sidebar rows + sparklines),
+`fc` + `fcHorizon` (AI predictions and how many days are drawn), `mc` (cached
+Monte Carlo cone), `newsItems` (headlines, also used for chart pins), `opts`
+(chart display toggles, persisted as `ls_chartopts`), `FC_RANGES` (which ranges
+show the forecast overlay and cone).
+
+**Browser storage keys**: `ls_watchlist`, `ls_seeded`, `ls_provider`,
+`ls_chartopts`, `ls_fclog` (the forecast track record).
 
 **JS sections**, in file order, each marked with a `// ---------- name ----------`
 comment:
@@ -91,12 +97,24 @@ comment:
 - `quote header + tiles` — `renderQuote(d)` fills the name, price, change line,
   and the stat tiles row.
 - `chart` — the heart of the UI. `renderChart(d)` builds the whole SVG as a
-  string: scales `x()`/`y()`, gridlines + y labels, area gradient, price line,
-  then (if `activeOverlay()` returns predictions) the forecast band, dashed
-  line, markers, and "today" divider, then the hover layer (crosshair, dot,
-  tooltip) wired to a transparent rect. Chart height, paddings, tick counts are
-  constants at the top of this function. It re-renders wholesale on resize,
-  theme change, range change — cheap because it's one innerHTML assignment.
+  string, in strict back-to-front order: gridlines + y labels → volatility cone
+  → price marks (line+area, or candles) → volume panel → AI forecast line and
+  "today" divider → x labels → crosshair + transparent hover rect → news pins
+  (last, so they sit above the hover layer and can take their own mouse
+  events). Geometry constants (`pad`, panel heights, tick counts) are at the top
+  of the function; the price panel keeps a fixed height and the SVG grows when
+  the volume panel is on. It re-renders wholesale on resize, theme change, range
+  change and option toggles — cheap, because it's one innerHTML assignment.
+- `computeCone()` — bootstrap Monte Carlo: resamples the stock's own de-meaned
+  daily log returns 2,000 times over 7 trading days and takes percentiles. Drift
+  is removed on purpose, so the cone's centre is a flat random walk — the naive
+  baseline the AI line is meant to be judged against. Computed once per data
+  load (in `loadSelected`) and cached in `mc`, so re-renders stay stable.
+- `track record` — `logForecast()` appends each forecast to `ls_fclog`;
+  `renderTrack()` fetches 6 months of actual closes per logged symbol, matches
+  each prediction to the nearest real trading day (within 2.5 days, and only
+  after the forecast was made), then aggregates direction accuracy, median
+  absolute % error per horizon bucket, and band coverage.
 - `ranges` — the 1D…5Y buttons.
 - `watchlist` — `renderWatchlist()` (cards from `quoteCache`), click-to-select,
   ✕-to-remove, `refreshWatchlistQuotes()`.
@@ -119,7 +137,12 @@ state" throughout — no virtual DOM, no partial updates.
 
 | Change | Where |
 |---|---|
-| Colors / dark mode | CSS variables at top of `index.html` |
+| Colors / dark mode | CSS variables at top of `index.html` (`--series-1` price, `--series-2` news pins) |
+| Cone horizon / simulation count | `computeCone(d, horizon, sims)` defaults |
+| Cone percentile bands | the two `band(...)` calls in `renderChart` |
+| News pin clustering distance | the `< 16` pixel test in the marks loop |
+| Default chart toggles | the `opts` object (users' choices override via `ls_chartopts`) |
+| Track-record horizon buckets | `buckets` in `renderTrack()` |
 | Default watchlist | `DEFAULTS` array (state section) — only affects fresh browsers; localStorage wins |
 | Chart size, paddings, tick count | constants at top of `renderChart()` |
 | Available time ranges | `RANGES` (frontend) + `INTERVALS` (`_yahoo.js`) + `RANGES` allowlist (`api/stock.js`) |

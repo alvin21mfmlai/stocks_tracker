@@ -3,7 +3,17 @@
 A live stock viewer with AI forecasting, powered by Yahoo Finance data and NVIDIA's
 `nemotron-3-super-120b-a12b` model.
 
-- Live(ish) quotes and interactive price charts (1D → 5Y) for any ticker
+- Live(ish) quotes and interactive price charts (1D → 5Y) for any ticker —
+  line or candlestick, with an optional volume panel
+- **Volatility cone**: a Monte Carlo probability fan (50% / 80% bands) built by
+  resampling the stock's own recent daily returns, drawn behind the AI forecast
+  so you can see whether the model's call is bold or just tracking the drift
+- **News pins on the chart**: headlines appear as markers at their publication
+  date — hover to read, click to open
+- **Forecast track record**: every forecast is logged in your browser and scored
+  against what actually happened (direction accuracy, median price error by
+  horizon, how often the real close landed inside the predicted band)
+- Watchlist rows show a 30-day sparkline alongside the price
 - Default watchlist: **NVDA** and **DBS** (`D05.SI` on SGX) — add more via search
 - One-click AI forecast: the last 3 months of price action + computed stats
   (SMAs, volatility, ranges) are sent to Nemotron, which returns an outlook,
@@ -66,7 +76,13 @@ Offline / UI-only mode with synthetic data: `MOCK=1 node dev-server.js`
 - Quotes come from Yahoo Finance's public chart API and may be delayed
   (typically real-time for US stocks, ~15–20 min for SGX). The page auto-refreshes
   every 60 seconds.
-- To change the model, set env var `NVIDIA_MODEL` (defaults to
-  `nvidia/nemotron-3-super-120b-a12b`).
+- To change the NVIDIA model, set env var `NVIDIA_MODEL` (defaults to
+  `nvidia/nemotron-3-super-120b-a12b`). `NVIDIA_THINKING=off` disables the
+  model's reasoning trace for faster responses.
+- OpenAI as an alternative provider: add env var `OPENAI_API_KEY` and users can
+  pick NVIDIA or OpenAI with the toggle in the forecast panel. `OPENAI_MODEL`
+  overrides the default (`gpt-5-mini`); `OPENAI_REASONING` sets reasoning effort
+  (default `low`). Note: OpenAI calls are billed to your account — every visitor
+  who clicks "Generate forecast" with OpenAI selected spends your credit.
 - Forecasts are AI-generated commentary on price action only (no news/fundamentals
   are fed in) — for information, not investment advice.
