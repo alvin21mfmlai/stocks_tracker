@@ -75,6 +75,62 @@ export async function searchSymbols(q) {
     }));
 }
 
+// Dividend history straight from the chart API's event stream (no key needed).
+// Ex-dividend dates matter because the price mechanically drops by roughly the
+// dividend amount on that day — a move no price-only model can anticipate.
+export async function getDividends(symbol) {
+  const parse = (j) => {
+    const divs = j?.chart?.result?.[0]?.events?.dividends || {};
+    return Object.values(divs)
+      .map((d) => ({ exDate: (d.date ?? 0) * 1000, amount: Number(d.amount) }))
+      .filter((d) => d.exDate > 0 && Number.isFinite(d.amount) && d.amount > 0)
+      .sort((a, b) => a.exDate - b.exDate);
+  };
+  const tries = [
+    `/v8/finance/chart/${encodeURIComponent(symbol)}?range=5y&interval=1wk&events=div`,
+    `/v8/finance/chart/${encodeURIComponent(symbol)}?range=2y&interval=1d&events=div`,
+  ];
+  for (const path of tries) {
+    try {
+      const out = parse(await yahooJson(path));
+      if (out.length) return out;
+    } catch {}
+  }
+  return [];
+}
+
+// Turn raw dividend events into the facts a forecaster actually needs.
+export function dividendContext(divs, lastPrice, now = Date.now()) {
+  if (!Array.isArray(divs) || !divs.length) return null;
+  const DAY = 864e5;
+  const last = divs[divs.length - 1];
+  const gaps = [];
+  for (let i = 1; i < divs.length; i++) gaps.push((divs[i].exDate - divs[i - 1].exDate) / DAY);
+  const sorted = [...gaps].sort((a, b) => a - b);
+  const medianGap = sorted.length ? sorted[sorted.length >> 1] : null;
+  const ttm = divs.filter((d) => d.exDate > now - 365 * DAY).reduce((a, b) => a + b.amount, 0);
+  const recent = divs.slice(-4);
+  const typical = recent.reduce((a, b) => a + b.amount, 0) / recent.length;
+  // Next ex-date projected from the payment rhythm — an estimate, not a filing.
+  let nextExDateEst = medianGap ? last.exDate + medianGap * DAY : null;
+  while (nextExDateEst && nextExDateEst < now - 3 * DAY) nextExDateEst += medianGap * DAY;
+  const cadence = medianGap == null ? null
+    : medianGap < 45 ? 'monthly' : medianGap < 135 ? 'quarterly' : medianGap < 250 ? 'semi-annual' : 'annual';
+  return {
+    lastExDate: last.exDate,
+    lastAmount: +last.amount.toFixed(4),
+    daysSinceLastEx: Math.round((now - last.exDate) / DAY),
+    typicalAmount: +typical.toFixed(4),
+    ttmTotal: +ttm.toFixed(4),
+    yieldPct: lastPrice ? +((ttm / lastPrice) * 100).toFixed(2) : null,
+    cadence,
+    medianGapDays: medianGap ? Math.round(medianGap) : null,
+    nextExDateEst,
+    daysToNextEst: nextExDateEst ? Math.round((nextExDateEst - now) / DAY) : null,
+    history: divs.slice(-8),
+  };
+}
+
 function decodeEntities(s) {
   return s
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')

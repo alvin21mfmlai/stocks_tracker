@@ -27,6 +27,7 @@ The browser never talks to Yahoo or NVIDIA directly — always through your own
 | `api/stock.js` | `GET /api/stock?symbol=&range=` → quote + price series |
 | `api/search.js` | `GET /api/search?q=` → ticker search results |
 | `api/news.js` | `GET /api/news?symbol=` → latest headlines |
+| `api/dividends.js` | `GET /api/dividends?symbol=&price=` → ex-dividend history + derived cycle facts |
 | `api/forecast.js` | `POST /api/forecast {symbol}` → stats + Nemotron AI forecast |
 | `dev-server.js` | Local-only dev server; `MOCK=1` serves synthetic data. Never runs on Vercel |
 | `package.json` | Just sets `"type": "module"` (ESM). No dependencies |
@@ -47,17 +48,29 @@ convention. All of them delegate the real work to `_yahoo.js` and reply through
   (`1d`→5m bars, `1mo`→daily, `1y`→weekly …), normalizes the response into
   `{symbol, name, currency, price, prevClose, …, points: [{t,o,h,l,c,v}]}`.
   This shape is the contract the frontend chart depends on.
-- `getNews(symbol)` — Yahoo's search endpoint with `newsCount`, returns
-  `[{title, publisher, link, publishedAt}]` sorted newest first.
+- `getNews(symbol)` — per-ticker RSS feed first (reliably scoped to the symbol),
+  falling back to the search endpoint filtered by `relatedTickers`. Returns
+  `[{title, publisher, link, publishedAt}]` sorted newest first, or `[]` — an
+  empty list beats unrelated headlines, which would also poison the prompt.
+- `getDividends(symbol)` — pulls the chart API's `events.dividends` stream (no
+  key needed), returning `[{exDate, amount}]`. `dividendContext(divs, price)`
+  turns that into the facts a forecaster needs: cadence, median gap, trailing-12m
+  total and yield, days since the last ex-date, and a **projected** next ex-date
+  (last + median gap — a cycle estimate, not a company filing).
 
 `forecast.js` is the most involved:
 
-1. Fetches 3 months of history and news in parallel (news failures are ignored).
+1. Fetches 3 months of history, news, and dividends in parallel (news and
+   dividend failures are ignored — the forecast still runs without them).
 2. `buildStats()` computes SMA20/50, 1w/1m/3m changes, daily log-return
    volatility, ranges — plain math, no model.
-3. Builds a prompt embedding the stats, last 30 closes, and up to 8 headlines,
-   demanding a strict JSON reply (outlook, confidence, summary,
-   support/resistance, drivers, risks, news_impact, 7 daily predictions).
+3. Builds a prompt embedding the stats, last 30 closes, up to 8 headlines, and a
+   dividend block — the latter lists the forecast window's actual dates and
+   instructs the model to subtract the dividend from predicted closes if an
+   ex-date falls inside it, and to discount any recent ex-date drop in the
+   history as mechanical rather than bearish. Demands a strict JSON reply
+   (outlook, confidence, summary, support/resistance, drivers, risks,
+   news_impact, dividend_note, 7 daily predictions).
 4. Calls NVIDIA: constants `NVIDIA_URL` and `MODEL` at the top of the file;
    model overridable via env `NVIDIA_MODEL` without a code change.
 5. `extractJson()` strips `<think>` reasoning traces and code fences, then

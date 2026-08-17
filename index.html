@@ -144,6 +144,7 @@
   .chart-legend .sw.dash { border-top-style: dashed; }
   .chart-legend .sw.news { border-top: 0; width: 9px; height: 9px; border-radius: 50%; background: var(--series-2); }
   .chart-legend .sw.cone { border-top: 0; width: 16px; height: 9px; border-radius: 2px; background: var(--series-1); opacity: 0.22; }
+  .chart-legend .sw.exdiv { border-top: 1px dashed var(--text-muted); width: 16px; }
   .fc-horizons { display: flex; gap: 4px; margin-top: 6px; }
   .fc-horizons button { border: 1px solid var(--border); background: none; color: var(--text-secondary); font-family: inherit; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
   .fc-horizons button:hover { background: var(--wash); }
@@ -161,7 +162,7 @@
   .chips button.active { border-color: var(--series-1); color: var(--text-primary); background: var(--wash); }
   .chips .sep { width: 1px; background: var(--border); margin: 2px 4px; }
 
-  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-top: 14px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(116px, 1fr)); gap: 8px; margin-top: 14px; }
   .tile { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
   .tile .k { font-size: 11px; color: var(--text-muted); }
   .tile .v { font-size: 14px; font-weight: 600; margin-top: 3px; font-variant-numeric: tabular-nums; }
@@ -279,6 +280,7 @@
             <button data-o="vol" title="Show volume bars">Volume</button>
             <button data-o="cone" title="Volatility probability cone (Monte Carlo)">Cone</button>
             <button data-o="news" title="Pin news headlines on the timeline">News</button>
+            <button data-o="div" title="Mark ex-dividend dates (price drops mechanically on these days)">Ex-div</button>
           </div>
         </div>
         <div class="chart-wrap">
@@ -352,12 +354,15 @@
   let fcHorizon = 7;      // trading days of forecast shown on the chart
   let mc = null;          // {symbol, range, days:[{d,t,p10,p25,p50,p75,p90}], sigmaPct, n}
   let newsItems = [];     // headlines for the selected symbol (for chart markers)
+  let divList = [];       // past ex-dividend events for the selected symbol
+  let divCtx = null;      // derived dividend facts (cycle, yield, next ex-date estimate)
+  const divCache = {};    // symbol -> {dividends, context}
   const FC_RANGES = ['1mo', '6mo'];  // ranges the forecast overlay + cone draw on
   const wlCache = {};      // symbol -> 1mo payload (watchlist rows + sparklines)
   const RANGES = [['1d','1D'],['5d','5D'],['1mo','1M'],['6mo','6M'],['1y','1Y'],['5y','5Y']];
 
   // chart display options, remembered per browser
-  const opts = { type: 'line', vol: true, cone: false, news: true };
+  const opts = { type: 'line', vol: true, cone: false, news: true, div: true };
   try { Object.assign(opts, JSON.parse(localStorage.getItem('ls_chartopts') || '{}')); } catch {}
   const saveOpts = () => { try { localStorage.setItem('ls_chartopts', JSON.stringify(opts)); } catch {} };
 
@@ -401,12 +406,22 @@
       el.textContent = `${sign} ${fmt(Math.abs(chg))} (${fmt(Math.abs(pc))}%) ${d.range === '1d' ? 'today' : 'over ' + labelForRange(d.range)}`;
       el.className = 'chg ' + (chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat');
     }
-    $('tiles').innerHTML = [
+    const tiles = [
       ['Prev close', fmt(d.prevClose)],
       ['Day range', d.dayLow != null ? `${fmt(d.dayLow)} – ${fmt(d.dayHigh)}` : '—'],
       ['52-wk range', d.fiftyTwoWeekLow != null ? `${fmt(d.fiftyTwoWeekLow)} – ${fmt(d.fiftyTwoWeekHigh)}` : '—'],
       ['Currency', d.currency || '—'],
-    ].map(([k, v]) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+    ];
+    if (divCtx) {
+      tiles.push(['Dividend yield (TTM)', divCtx.yieldPct != null ? `${fmt(divCtx.yieldPct)}%` : '—']);
+      const days = divCtx.daysToNextEst;
+      tiles.push(['Next ex-date (est.)', divCtx.nextExDateEst
+        ? `${new Date(divCtx.nextExDateEst).toLocaleDateString([], { month: 'short', day: 'numeric' })}` +
+          (days != null ? `<span style="color:var(--text-muted);font-weight:400"> · ${days <= 0 ? 'now' : days + 'd'}</span>` : '')
+        : '—']);
+    }
+    $('tiles').innerHTML = tiles
+      .map(([k, v]) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
   }
   function labelForRange(r) { return ({'1d':'today','5d':'5 days','1mo':'1 month','6mo':'6 months','1y':'1 year','5y':'5 years'})[r] || r; }
 
@@ -542,6 +557,17 @@
       }
     }
 
+    // --- ex-dividend markers: past events in view, plus the projected next one
+    // if it lands inside the forecast window (that's a mechanical price drop) ---
+    const exMarks = [];
+    if (opts.div) {
+      for (const dv of divList) {
+        if (dv.exDate >= t0 && dv.exDate <= tEnd) exMarks.push({ t: dv.exDate, amount: dv.amount, est: false });
+      }
+      if (divCtx && divCtx.nextExDateEst && divCtx.nextExDateEst > tEnd && divCtx.nextExDateEst <= t1)
+        exMarks.push({ t: divCtx.nextExDateEst, amount: divCtx.typicalAmount, est: true });
+    }
+
     const grid = cssVar('--grid'), baseline = cssVar('--baseline'), muted = cssVar('--text-muted');
     const series = cssVar('--series-1'), accent = cssVar('--series-2'), surface = cssVar('--surface-1');
     const upC = cssVar('--delta-up'), downC = cssVar('--delta-down');
@@ -631,9 +657,24 @@
       svg += `<text x="${xl.x.toFixed(1)}" y="${H - 8}" font-size="11" fill="${muted}" text-anchor="${anchor}">${xl.text}</text>`;
     });
 
+    // ex-dividend guide lines — neutral ink, so they read as annotation not data
+    for (const m of exMarks) {
+      const cx = x(m.t);
+      svg += `<line x1="${cx.toFixed(1)}" x2="${cx.toFixed(1)}" y1="${pad.t}" y2="${pad.t + ih}" stroke="${muted}" stroke-width="1" stroke-dasharray="${m.est ? '2 4' : '4 3'}" stroke-opacity="${m.est ? 0.5 : 0.75}"/>`;
+    }
+
     svg += `<line id="xh" x1="0" x2="0" y1="${pad.t}" y2="${pad.t + ih}" stroke="${baseline}" stroke-width="1" visibility="hidden"/>`;
     svg += `<circle id="xdot" r="4" fill="${series}" stroke="${surface}" stroke-width="2" visibility="hidden"/>`;
     svg += `<rect id="hover" x="${pad.l}" y="${pad.t}" width="${iw}" height="${ih}" fill="transparent"/>`;
+
+    // --- ex-dividend badges (above the hover layer so they can be hovered) ---
+    exMarks.forEach((m, i) => {
+      const cx = x(m.t), by = pad.t + ih;
+      svg += `<g class="dmark" data-i="${i}" style="cursor:pointer">
+        <rect x="${(cx - 9).toFixed(1)}" y="${(by - 7).toFixed(1)}" width="18" height="14" rx="3" fill="${surface}" stroke="${muted}" stroke-width="1" stroke-opacity="0.85"/>
+        <text x="${cx.toFixed(1)}" y="${(by + 3.5).toFixed(1)}" font-size="9" font-weight="700" fill="${muted}" text-anchor="middle">${m.est ? 'D?' : 'D'}</text>
+      </g>`;
+    });
 
     // --- news pins (last, so they sit above the hover layer) ---
     marks.forEach((m, i) => {
@@ -653,6 +694,7 @@
     if (preds) leg.push(`<span><span class="sw dash"></span>AI forecast (${preds.length}d)</span>`);
     if (cone) leg.push(`<span><span class="sw cone"></span>Volatility cone (50/80%)</span>`);
     if (marks.length) leg.push(`<span><span class="sw news"></span>News</span>`);
+    if (exMarks.length) leg.push(`<span><span class="sw exdiv"></span>Ex-dividend</span>`);
     host.innerHTML = (leg.length > 1 ? `<div class="chart-legend">${leg.join('')}</div>` : '') + svg;
 
     // --- interactions ---
@@ -700,6 +742,24 @@
     const leave = () => { xh.setAttribute('visibility', 'hidden'); dot.setAttribute('visibility', 'hidden'); tt.style.display = 'none'; };
     hover.addEventListener('mousemove', move);
     hover.addEventListener('mouseleave', leave);
+
+    svgEl.querySelectorAll('.dmark').forEach((g) => {
+      const m = exMarks[+g.dataset.i];
+      g.addEventListener('mouseenter', () => {
+        leave();
+        const when = new Date(m.t).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+        const cur = d.currency ? d.currency + ' ' : '';
+        tt.innerHTML = m.est
+          ? `<div class="tt-t">${when} · estimated ex-dividend</div>
+             <div class="tt-v">≈ ${cur}${fmt(m.amount)} per share</div>
+             <div class="tt-t">Projected from the payment cycle, not a filing. Expect the price to drop by about this much on the day.</div>`
+          : `<div class="tt-t">${when} · ex-dividend</div>
+             <div class="tt-v">${cur}${fmt(m.amount)} per share</div>
+             <div class="tt-t">Price dropped mechanically by roughly this amount — not a sell-off.</div>`;
+        place(x(m.t), pad.t + ih, true);
+      });
+      g.addEventListener('mouseleave', () => { tt.style.display = 'none'; tt.classList.remove('wide'); });
+    });
 
     svgEl.querySelectorAll('.nmark').forEach((g) => {
       const m = marks[+g.dataset.i];
@@ -794,7 +854,7 @@
       return;
     }
     const item = e.target.closest('.wl-item'); if (!item) return;
-    selected = item.dataset.s; renderWatchlist(); loadSelected(); resetForecast(); loadNews();
+    selected = item.dataset.s; renderWatchlist(); loadSelected(); resetForecast(); loadNews(); loadDividends();
   });
 
   async function refreshWatchlistQuotes() {
@@ -828,7 +888,7 @@
     if (!watchlist.includes(sym)) { watchlist.push(sym); saveWl(); }
     selected = sym;
     sInput.value = ''; sBox.classList.remove('open');
-    renderWatchlist(); loadSelected(); resetForecast(); refreshWatchlistQuotes(); loadNews();
+    renderWatchlist(); loadSelected(); resetForecast(); refreshWatchlistQuotes(); loadNews(); loadDividends();
   });
   document.addEventListener('click', (e) => { if (!e.target.closest('.searchbox')) sBox.classList.remove('open'); });
 
@@ -859,6 +919,26 @@
     } catch (e) {
       if (sym === selected) $('news').innerHTML = `<div class="skel">Could not load news: ${esc(e.message)}</div>`;
     }
+  }
+
+  // ---------- dividends ----------
+  async function loadDividends() {
+    if (!selected) return;
+    const sym = selected;
+    if (divCache[sym]) {
+      ({ dividends: divList, context: divCtx } = divCache[sym]);
+      if (chartData && chartData.symbol === sym) { renderQuote(chartData); renderChart(chartData); }
+      return;
+    }
+    divList = []; divCtx = null;
+    try {
+      const price = chartData && chartData.symbol === sym ? chartData.price : '';
+      const j = await api(`/api/dividends?symbol=${encodeURIComponent(sym)}${price ? `&price=${price}` : ''}`);
+      if (sym !== selected) return;
+      divCache[sym] = { dividends: j.dividends || [], context: j.context || null };
+      divList = divCache[sym].dividends; divCtx = divCache[sym].context;
+      if (chartData && chartData.symbol === sym) { renderQuote(chartData); renderChart(chartData); }
+    } catch { /* dividends are a bonus — never block the chart */ }
   }
 
   // ---------- forecast ----------
@@ -921,6 +1001,7 @@
       ${j.model ? `<span class="badge conf">${esc(String(j.model).split('/').pop())}</span>` : ''}</div>`;
     html += `<div>${esc(f.summary || '')}</div>`;
     if (f.news_impact) html += `<h4>News impact</h4><div>${esc(f.news_impact)}</div>`;
+    if (f.dividend_note) html += `<h4>Dividend effect</h4><div>${esc(f.dividend_note)}</div>`;
     if (f.support != null || f.resistance != null) {
       html += `<div class="fc-levels">
         <div class="tile"><div class="k">Support</div><div class="v">${fmt(f.support)}</div></div>
@@ -1109,7 +1190,7 @@
   setInterval(loadNews, 300000);  // news refreshes every 5 minutes
 
   renderRanges(); renderWatchlist(); paintOpts();
-  loadSelected(); refreshWatchlistQuotes(); loadNews(); renderTrack();
+  loadSelected(); refreshWatchlistQuotes(); loadNews(); loadDividends(); renderTrack();
 })();
 </script>
 </body>

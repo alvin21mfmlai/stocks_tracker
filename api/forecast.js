@@ -1,12 +1,12 @@
 // POST /api/forecast  { symbol }  -> AI outlook from NVIDIA Nemotron
 // Requires env var NVIDIA_API_KEY (set it in Vercel project settings).
-import { getChart, getNews, sendJson } from './_yahoo.js';
- 
+import { getChart, getNews, getDividends, dividendContext, sendJson } from './_yahoo.js';
+
 const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const MODEL = process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-super-120b-a12b';
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5.5';
- 
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
+
 function pct(a, b) { return b ? ((a - b) / b) * 100 : 0; }
 function sma(arr, n) {
   if (arr.length < n) return null;
@@ -14,7 +14,7 @@ function sma(arr, n) {
   return s / n;
 }
 function round2(x) { return x == null ? null : Math.round(x * 100) / 100; }
- 
+
 function buildStats(data) {
   const closes = data.points.map((p) => p.c);
   const last = closes[closes.length - 1];
@@ -37,7 +37,7 @@ function buildStats(data) {
     fiftyTwoWeekLow: round2(data.fiftyTwoWeekLow),
   };
 }
- 
+
 // Next n trading days (Mon-Fri) after a given timestamp, as ms timestamps.
 function nextTradingDays(fromTs, n) {
   const out = [];
@@ -49,7 +49,7 @@ function nextTradingDays(fromTs, n) {
   }
   return out;
 }
- 
+
 // Validate + normalize model predictions; attach real trading-day timestamps.
 function normalizePredictions(parsed, lastPoint, lastClose) {
   const raw = Array.isArray(parsed?.predictions) ? parsed.predictions : [];
@@ -71,7 +71,7 @@ function normalizePredictions(parsed, lastPoint, lastClose) {
     return { d: p.d, t: days[i], price: round2(p.price), low: round2(Math.min(lo, p.price)), high: round2(Math.max(hi, p.price)) };
   });
 }
- 
+
 function extractJson(text) {
   // Strip reasoning traces and code fences, then find the outermost JSON object.
   const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/```(?:json)?/g, '');
@@ -80,7 +80,7 @@ function extractJson(text) {
   if (start === -1 || end <= start) return null;
   try { return JSON.parse(cleaned.slice(start, end + 1)); } catch { return null; }
 }
- 
+
 async function readBody(req) {
   if (req.body) return typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
   const chunks = [];
@@ -88,10 +88,10 @@ async function readBody(req) {
   const raw = Buffer.concat(chunks).toString('utf8');
   return raw ? JSON.parse(raw) : {};
 }
- 
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return sendJson(res, 405, { error: 'POST only' });
- 
+
   try {
     const { symbol, provider: reqProvider } = await readBody(req);
     if (!symbol) return sendJson(res, 400, { error: 'symbol is required' });
@@ -105,22 +105,50 @@ export default async function handler(req, res) {
         error: `${provider === 'openai' ? 'OPENAI_API_KEY' : 'NVIDIA_API_KEY'} is not set on the server`,
       });
     }
- 
-    const [data, news] = await Promise.all([
+
+    const [data, news, divs] = await Promise.all([
       getChart(symbol, '3mo'),
-      getNews(symbol).catch(() => []),   // news is best-effort; forecast still works without it
+      getNews(symbol).catch(() => []),        // news is best-effort
+      getDividends(symbol).catch(() => []),   // dividends too
     ]);
     const stats = buildStats(data);
+    const div = dividendContext(divs, stats.last);
     const recent = data.points.slice(-30).map((p) => `${new Date(p.t).toISOString().slice(0, 10)}: ${p.c}`).join('\n');
+    const iso = (t) => new Date(t).toISOString().slice(0, 10);
+    // The forecast window in real dates, so the model can place an ex-date inside it.
+    const horizonDates = (() => {
+      const out = [], dt = new Date(data.points[data.points.length - 1].t);
+      while (out.length < 7) {
+        dt.setUTCDate(dt.getUTCDate() + 1);
+        const wd = dt.getUTCDay();
+        if (wd !== 0 && wd !== 6) out.push(iso(dt.getTime()));
+      }
+      return out;
+    })();
+
+    const divBlock = div ? `
+Dividend context (${data.currency}):
+- Pays ${div.cadence || 'irregularly'}${div.medianGapDays ? ` (~every ${div.medianGapDays} days)` : ''}
+- Most recent ex-dividend date: ${iso(div.lastExDate)}, amount ${div.lastAmount} (${div.daysSinceLastEx} days ago)
+- Typical recent amount: ${div.typicalAmount} | Trailing 12m total: ${div.ttmTotal}${div.yieldPct != null ? ` (~${div.yieldPct}% yield)` : ''}
+- Estimated NEXT ex-dividend date: ${div.nextExDateEst ? iso(div.nextExDateEst) : 'unknown'}${div.daysToNextEst != null ? ` (~${div.daysToNextEst} days away)` : ''} — projected from the payment cycle, not a company filing, so treat it as approximate
+- Past ex-dates: ${div.history.map((h) => `${iso(h.exDate)} (${h.amount})`).join(', ')}
+
+CRITICAL — dividend arithmetic:
+* On an ex-dividend date the share price mechanically drops by roughly the dividend amount. This is not sentiment and not a trend.
+* The forecast window covers these trading days: ${horizonDates.join(', ')}. If the estimated ex-date falls on or near any of them, SUBTRACT about ${div.typicalAmount} from your predicted closes from that day onward, and explain it in dividend_note.
+* If an ex-date occurred within the last ~10 sessions (see above), part of the recent decline in the price history is that mechanical drop — do not read it as bearish momentum.
+` : '';
+
     const newsBlock = news.length
       ? '\nRecent news headlines (newest first):\n' + news.slice(0, 8).map((n) => {
           const age = n.publishedAt ? Math.round((Date.now() - n.publishedAt) / 36e5) : null;
           return `- [${n.publisher}${age != null ? `, ${age < 24 ? age + 'h' : Math.round(age / 24) + 'd'} ago` : ''}] ${n.title}`;
         }).join('\n') + '\n'
       : '';
- 
+
     const prompt = `You are an equity analyst. Analyze this stock and give a short-term (1-2 week) outlook.
- 
+
 Stock: ${data.name} (${data.symbol}), ${data.exchange}, currency ${data.currency}
 Current price: ${stats.last}
 Performance: 1w ${stats.change1w}%, 1m ${stats.change1m}%, 3m ${stats.change3m}%
@@ -128,12 +156,12 @@ Performance: 1w ${stats.change1w}%, 1m ${stats.change1m}%, 3m ${stats.change3m}%
 Daily volatility: ${stats.dailyVolPct}%
 3-month range: ${stats.low3m} - ${stats.high3m}
 52-week range: ${stats.fiftyTwoWeekLow} - ${stats.fiftyTwoWeekHigh}
- 
+
 Last 30 daily closes:
 ${recent}
-${newsBlock}
-Weigh both the price action AND the news headlines in your analysis. If a headline is significant (earnings, guidance, regulation, M&A), let it influence the outlook and predictions.
- 
+${divBlock}${newsBlock}
+Weigh the price action, the dividend calendar AND the news headlines. If a headline is significant (earnings, guidance, regulation, M&A), let it influence the outlook and predictions.
+
 Respond with ONLY a JSON object, no other text:
 {
   "outlook": "bullish" | "bearish" | "neutral",
@@ -144,6 +172,7 @@ Respond with ONLY a JSON object, no other text:
   "drivers": ["3-4 short bullet strings: what is driving the price action"],
   "risks": ["2-3 short bullet strings: what could invalidate this outlook"],
   "news_impact": "1-2 sentences: how the recent headlines affect this outlook (omit or null if no news was provided)",
+  "dividend_note": "1-2 sentences: whether an ex-dividend date falls in the forecast window and how you adjusted the predicted prices for it, or how a recent ex-date distorted the price history (null if no dividend data was provided)",
   "predictions": [
     {"d": 1, "price": <predicted close after 1 trading day>, "low": <plausible low>, "high": <plausible high>},
     {"d": 2, "price": ..., "low": ..., "high": ...},
@@ -151,7 +180,7 @@ Respond with ONLY a JSON object, no other text:
   ]
 }
 The predicted low/high band should widen with the horizon, consistent with the stock's daily volatility of ${stats.dailyVolPct}%. Keep predictions realistic — small daily moves anchored to the current price and trend.`;
- 
+
     // Nemotron 3 Super is a REASONING model: by default it generates a long
     // hidden thinking trace before the answer, which on the free shared
     // endpoint regularly takes 40s+ and blows the serverless time limit.
@@ -169,7 +198,7 @@ The predicted low/high band should widen with the horizon, consistent with the s
           messages: [{ role: 'user', content: prompt }],
           max_completion_tokens: 4096,
         };
-        if (mode === 'effort') body.reasoning_effort = process.env.OPENAI_REASONING || 'medium';
+        if (mode === 'effort') body.reasoning_effort = process.env.OPENAI_REASONING || 'low';
         return body;                           // 'plain' = no reasoning params (for non-reasoning models)
       }
       const body = {
@@ -194,7 +223,7 @@ The predicted low/high band should widen with the horizon, consistent with the s
       : process.env.NVIDIA_THINKING === 'off' ? ['fast', 'plain']
       : process.env.NVIDIA_THINKING === 'full' ? ['plain']
       : ['budget', 'fast', 'plain'];
- 
+
     const TOTAL_BUDGET_MS = 50_000;   // stay under vercel.json maxDuration (60s)
     const started = Date.now();
     let r = null, errText = '', timedOut = false;
@@ -222,7 +251,7 @@ The predicted low/high band should widen with the horizon, consistent with the s
       }
       break; // real error (bad key, bad model id, …) — don't retry
     }
- 
+
     if (!r || !r.ok) {
       const busy = r && (r.status === 503 || r.status === 429);
       return sendJson(res, 502, {
@@ -243,13 +272,14 @@ The predicted low/high band should widen with the horizon, consistent with the s
       const lastPoint = data.points[data.points.length - 1];
       parsed.predictions = normalizePredictions(parsed, lastPoint, stats.last);
     }
- 
+
     sendJson(res, 200, {
       symbol: data.symbol,
       name: data.name,
       currency: data.currency,
       stats,
       newsUsed: news.slice(0, 8).length,
+      dividends: div,
       provider,
       model: usedModel,
       forecast: parsed,
