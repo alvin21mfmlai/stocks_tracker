@@ -17,6 +17,9 @@
     --border: rgba(11,11,11,0.10);
     --series-1: #2a78d6;
     --series-2: #eb6834;
+    --zone-1: #f0efec;
+    --zone-2: #e1e0d9;
+    --zone-3: #c3c2b7;
     --delta-up: #006300;
     --delta-down: #d03b3b;
     --status-good: #0ca30c;
@@ -36,6 +39,9 @@
       --border: rgba(255,255,255,0.10);
       --series-1: #3987e5;
       --series-2: #d95926;
+      --zone-1: #242422;
+      --zone-2: #2c2c2a;
+      --zone-3: #383835;
       --delta-up: #0ca30c;
       --delta-down: #d03b3b;
       --wash: rgba(255,255,255,0.06);
@@ -53,6 +59,9 @@
     --border: rgba(255,255,255,0.10);
     --series-1: #3987e5;
     --series-2: #d95926;
+    --zone-1: #242422;
+    --zone-2: #2c2c2a;
+    --zone-3: #383835;
     --delta-up: #0ca30c;
     --delta-down: #d03b3b;
     --wash: rgba(255,255,255,0.06);
@@ -145,6 +154,7 @@
   .chart-legend .sw.news { border-top: 0; width: 9px; height: 9px; border-radius: 50%; background: var(--series-2); }
   .chart-legend .sw.cone { border-top: 0; width: 16px; height: 9px; border-radius: 2px; background: var(--series-1); opacity: 0.22; }
   .chart-legend .sw.exdiv { border-top: 1px dashed var(--text-muted); width: 16px; }
+  .chart-legend .sw.sig { border-top: 0; width: 16px; height: 9px; border-radius: 2px; background: var(--text-muted); opacity: 0.28; }
   .fc-horizons { display: flex; gap: 4px; margin-top: 6px; }
   .fc-horizons button { border: 1px solid var(--border); background: none; color: var(--text-secondary); font-family: inherit; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
   .fc-horizons button:hover { background: var(--wash); }
@@ -219,6 +229,30 @@
   .news-item:hover { background: var(--wash); }
   .news-item .nt { font-size: 13px; line-height: 1.4; font-weight: 500; }
   .news-item .nm2 { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+  /* ---- valuation gauge ---- */
+  .gauge { margin: 6px 0 2px; }
+  .gauge .track {
+    position: relative; height: 26px; border-radius: 6px; overflow: hidden;
+    background: linear-gradient(90deg,
+      var(--zone-3) 0 16.66%, var(--zone-2) 16.66% 33.33%,
+      var(--zone-1) 33.33% 66.66%,
+      var(--zone-2) 66.66% 83.33%, var(--zone-3) 83.33% 100%);
+  }
+  .gauge .mid { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: var(--baseline); }
+  .gauge .tick { position: absolute; top: 4px; bottom: 4px; width: 2px; border-radius: 1px; background: var(--text-muted); opacity: 0.75; transform: translateX(-1px); }
+  .gauge .marker {
+    position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%;
+    background: var(--series-1); border: 2px solid var(--surface-1); transform: translate(-50%, -50%);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+  }
+  .gauge .scale { position: relative; height: 14px; margin-top: 3px; }
+  .gauge .scale span { position: absolute; transform: translateX(-50%); font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .val-verdict { font-size: 13px; line-height: 1.5; margin: 10px 0 2px; }
+  .val-verdict strong { font-weight: 700; }
+  .val-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+  .val-legend .k { display: inline-block; width: 2px; height: 9px; background: var(--text-muted); margin-right: 5px; vertical-align: -1px; }
+  .val-legend .kd { background: var(--series-1); border-radius: 50%; width: 8px; height: 8px; }
+
   /* ---- track record ---- */
   .tr-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
   .tr-head h3 { font-size: 13px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; }
@@ -281,6 +315,7 @@
             <button data-o="cone" title="Volatility probability cone (Monte Carlo)">Cone</button>
             <button data-o="news" title="Pin news headlines on the timeline">News</button>
             <button data-o="div" title="Mark ex-dividend dates (price drops mechanically on these days)">Ex-div</button>
+            <button data-o="sigma" title="20-period mean with ±1σ and ±2σ bands (the sigma rule)">σ bands</button>
           </div>
         </div>
         <div class="chart-wrap">
@@ -288,6 +323,13 @@
           <div id="tooltip" class="tooltip"></div>
         </div>
         <div class="tiles" id="tiles"></div>
+      </div>
+      <div class="card" id="valCard" style="margin-top:16px; display:none">
+        <div class="tr-head">
+          <h3>Valuation &amp; stretch</h3>
+          <span class="sub" id="valSub"></span>
+        </div>
+        <div id="valuation"></div>
       </div>
       <div class="card" style="margin-top:16px">
         <h3 style="font-size:13px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">News</h3>
@@ -357,12 +399,14 @@
   let divList = [];       // past ex-dividend events for the selected symbol
   let divCtx = null;      // derived dividend facts (cycle, yield, next ex-date estimate)
   const divCache = {};    // symbol -> {dividends, context}
+  let valCtx = null;      // sigma-rule valuation summary for the selected symbol
+  const valCache = {};    // symbol -> valuation summary
   const FC_RANGES = ['1mo', '6mo'];  // ranges the forecast overlay + cone draw on
   const wlCache = {};      // symbol -> 1mo payload (watchlist rows + sparklines)
   const RANGES = [['1d','1D'],['5d','5D'],['1mo','1M'],['6mo','6M'],['1y','1Y'],['5y','5Y']];
 
   // chart display options, remembered per browser
-  const opts = { type: 'line', vol: true, cone: false, news: true, div: true };
+  const opts = { type: 'line', vol: true, cone: false, news: true, div: true, sigma: false };
   try { Object.assign(opts, JSON.parse(localStorage.getItem('ls_chartopts') || '{}')); } catch {}
   const saveOpts = () => { try { localStorage.setItem('ls_chartopts', JSON.stringify(opts)); } catch {} };
 
@@ -434,6 +478,27 @@
     const preds = fc.predictions.slice(0, fcHorizon);
     return preds.length ? preds : null;
   }
+  // Rolling mean ±1σ/±2σ over the displayed bars — the sigma rule, drawn.
+  // ~95% of closes should sit inside the ±2σ envelope; a close outside it is a
+  // statistically unusual position, NOT automatically a reversal signal.
+  function sigmaBands(pts, n = 20) {
+    if (!pts || pts.length < n + 2) return null;
+    const out = [];
+    let sum = 0, sumSq = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const c = pts[i].c;
+      sum += c; sumSq += c * c;
+      if (i >= n) { const old = pts[i - n].c; sum -= old; sumSq -= old * old; }
+      if (i >= n - 1) {
+        const m = sum / n;
+        const varc = Math.max(0, (sumSq - n * m * m) / (n - 1));
+        const s = Math.sqrt(varc);
+        out.push({ t: pts[i].t, m, u1: m + s, l1: m - s, u2: m + 2 * s, l2: m - 2 * s });
+      }
+    }
+    return out.length > 2 ? out : null;
+  }
+
   function activeCone(d) {
     if (!opts.cone || !mc || mc.symbol !== d.symbol || !FC_RANGES.includes(d.range)) return null;
     return mc.days;
@@ -495,6 +560,7 @@
     if (!pts || pts.length < 2) { host.innerHTML = '<div class="chart-msg">No chart data for this range.</div>'; return; }
     const preds = activeOverlay(d);
     const cone = activeCone(d);
+    const bands = opts.sigma ? sigmaBands(pts) : null;
     const candles = opts.type === 'candle';
     const hasVol = pts.some((p) => p.v > 0);
     const showVol = opts.vol && hasVol;
@@ -517,6 +583,7 @@
     if (d.range === '1d' && d.prevClose != null) { lo = Math.min(lo, d.prevClose); hi = Math.max(hi, d.prevClose); }
     if (preds) for (const p of preds) { lo = Math.min(lo, p.low ?? p.price); hi = Math.max(hi, p.high ?? p.price); }
     if (cone) for (const c of cone) { lo = Math.min(lo, c.p10); hi = Math.max(hi, c.p90); }
+    if (bands) for (const b of bands) { lo = Math.min(lo, b.l2); hi = Math.max(hi, b.u2); }
     const padY = (hi - lo) * 0.08 || hi * 0.01 || 1;
     lo -= padY; hi += padY;
 
@@ -583,6 +650,19 @@
     }
     if (d.range === '1d' && d.prevClose != null)
       svg += `<line x1="${pad.l}" x2="${pad.l + iw}" y1="${y(d.prevClose).toFixed(1)}" y2="${y(d.prevClose).toFixed(1)}" stroke="${baseline}" stroke-width="1" stroke-dasharray="3 4"/>`;
+
+    // --- sigma bands (neutral ink: context for the price, not a series) ---
+    if (bands) {
+      const envelope = (loK, hiK, op) => {
+        const top = bands.map((b, i) => `${i ? 'L' : 'M'}${x(b.t).toFixed(1)},${y(b[hiK]).toFixed(1)}`).join('');
+        const bot = [...bands].reverse().map((b) => `L${x(b.t).toFixed(1)},${y(b[loK]).toFixed(1)}`).join('');
+        return `<path d="${top}${bot}Z" fill="${muted}" fill-opacity="${op}"/>`;
+      };
+      svg += envelope('l2', 'u2', 0.10);
+      svg += envelope('l1', 'u1', 0.10);
+      const midLine = bands.map((b, i) => `${i ? 'L' : 'M'}${x(b.t).toFixed(1)},${y(b.m).toFixed(1)}`).join('');
+      svg += `<path d="${midLine}" fill="none" stroke="${muted}" stroke-width="1" stroke-dasharray="3 3"/>`;
+    }
 
     // --- probability cone (drawn first, behind everything) ---
     if (cone) {
@@ -695,6 +775,7 @@
     if (cone) leg.push(`<span><span class="sw cone"></span>Volatility cone (50/80%)</span>`);
     if (marks.length) leg.push(`<span><span class="sw news"></span>News</span>`);
     if (exMarks.length) leg.push(`<span><span class="sw exdiv"></span>Ex-dividend</span>`);
+    if (bands) leg.push(`<span><span class="sw sig"></span>20d mean ±1σ/±2σ</span>`);
     host.innerHTML = (leg.length > 1 ? `<div class="chart-legend">${leg.join('')}</div>` : '') + svg;
 
     // --- interactions ---
@@ -854,7 +935,7 @@
       return;
     }
     const item = e.target.closest('.wl-item'); if (!item) return;
-    selected = item.dataset.s; renderWatchlist(); loadSelected(); resetForecast(); loadNews(); loadDividends();
+    selected = item.dataset.s; renderWatchlist(); loadSelected(); resetForecast(); loadNews(); loadDividends(); loadValuation();
   });
 
   async function refreshWatchlistQuotes() {
@@ -888,7 +969,7 @@
     if (!watchlist.includes(sym)) { watchlist.push(sym); saveWl(); }
     selected = sym;
     sInput.value = ''; sBox.classList.remove('open');
-    renderWatchlist(); loadSelected(); resetForecast(); refreshWatchlistQuotes(); loadNews(); loadDividends();
+    renderWatchlist(); loadSelected(); resetForecast(); refreshWatchlistQuotes(); loadNews(); loadDividends(); loadValuation();
   });
   document.addEventListener('click', (e) => { if (!e.target.closest('.searchbox')) sBox.classList.remove('open'); });
 
@@ -939,6 +1020,85 @@
       divList = divCache[sym].dividends; divCtx = divCache[sym].context;
       if (chartData && chartData.symbol === sym) { renderQuote(chartData); renderChart(chartData); }
     } catch { /* dividends are a bonus — never block the chart */ }
+  }
+
+  // ---------- valuation (sigma rule) ----------
+  async function loadValuation() {
+    if (!selected) return;
+    const sym = selected;
+    if (valCache[sym] !== undefined) { valCtx = valCache[sym]; renderValuation(); return; }
+    valCtx = null; renderValuation();
+    try {
+      const j = await api(`/api/valuation?symbol=${encodeURIComponent(sym)}`);
+      if (sym !== selected) return;
+      valCache[sym] = j.valuation || null;
+      valCtx = valCache[sym];
+      renderValuation();
+    } catch { /* statistical extras never block the chart */ }
+  }
+
+  const zPos = (z) => Math.max(0, Math.min(100, ((z + 3) / 6) * 100));
+  const ord = (n) => {
+    const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  };
+
+  function renderValuation() {
+    const card = $('valCard');
+    if (!valCtx) { card.style.display = 'none'; return; }
+    const v = valCtx;
+    card.style.display = '';
+    $('valSub').textContent = `sigma rule · ${v.daysUsed} trading days`;
+
+    const ticks = [];
+    if (v.z20 != null) ticks.push({ z: v.z20, label: '20-day' });
+    if (v.trendZ != null) ticks.push({ z: v.trendZ, label: 'trend' });
+
+    const gauge = `<div class="gauge">
+      <div class="track">
+        <div class="mid"></div>
+        ${ticks.map((t) => `<div class="tick" style="left:${zPos(t.z)}%" title="${t.label}: ${fmt(t.z)}σ"></div>`).join('')}
+        ${v.composite != null ? `<div class="marker" style="left:${zPos(v.composite)}%" title="composite ${fmt(v.composite)}σ"></div>` : ''}
+      </div>
+      <div class="scale">${[-3, -2, -1, 0, 1, 2, 3].map((n) =>
+        `<span style="left:${zPos(n)}%">${n > 0 ? '+' : ''}${n}σ</span>`).join('')}</div>
+    </div>`;
+
+    // Plain-language read, kept deliberately statistical rather than valuational.
+    const c = v.composite;
+    const where = c == null ? 'unclear'
+      : c <= -2 ? 'unusually low' : c <= -1 ? 'on the low side'
+      : c < 1 ? 'about where it usually sits' : c < 2 ? 'on the high side' : 'unusually high';
+    const trendWord = v.trendDriftPctPerYear == null ? ''
+      : v.trendDriftPctPerYear > 5 ? ' The 1-year trend is still rising, which argues against a snap-back purely on stretch.'
+      : v.trendDriftPctPerYear < -5 ? ' The 1-year trend is falling, so a low reading may be the trend rather than a bargain.'
+      : ' The 1-year trend is roughly flat, the condition where mean reversion works best.';
+
+    const tiles = [
+      ['vs 20-day mean', v.z20 != null ? `${fmt(v.z20)}σ` : '—'],
+      ['vs 50-day mean', v.z50 != null ? `${fmt(v.z50)}σ` : '—'],
+      ['vs 200-day mean', v.z200 != null ? `${fmt(v.z200)}σ` : '—'],
+      ['vs 1-yr trend', v.trendZ != null ? `${fmt(v.trendZ)}σ` : '—'],
+      ['Gap to trend', v.trendGapPct != null ? `${v.trendGapPct > 0 ? '+' : ''}${fmt(v.trendGapPct, 1)}%` : '—'],
+      ['1-yr price percentile', v.pricePercentile1y != null ? ord(v.pricePercentile1y) : '—'],
+      ['20-day mean', v.sma20 != null ? fmt(v.sma20) : '—'],
+      ['±2σ band', v.band20 ? `${fmt(v.band20.lo2)} – ${fmt(v.band20.hi2)}` : '—'],
+    ];
+    if (v.dividendYieldPercentile != null) {
+      tiles.push(['Yield vs own history', `${ord(v.dividendYieldPercentile)} pct`]);
+    }
+
+    $('valuation').innerHTML = gauge + `
+      <div class="val-legend">
+        <span><span class="k kd"></span>composite ${v.composite != null ? fmt(v.composite) + 'σ' : '—'}</span>
+        ${ticks.map((t) => `<span><span class="k"></span>${t.label} ${fmt(t.z)}σ</span>`).join('')}
+      </div>
+      <div class="val-verdict">Price is <strong>${where}</strong> relative to its own recent behaviour.${trendWord}</div>
+      <div class="tiles" style="margin-top:10px">${tiles.map(([k, val]) =>
+        `<div class="tile"><div class="k">${k}</div><div class="v">${val}</div></div>`).join('')}</div>
+      <div class="fc-note">Sigma measures how far price sits from its own mean (~68% of days fall within 1σ, ~95% within 2σ).
+        This is statistical stretch, not a valuation of the business — it knows nothing about earnings or assets, and a stock can stay beyond 2σ for a long time in a strong trend.
+        ${v.dividendYieldPercentile != null ? 'A <em>higher</em> yield percentile means the price is low relative to the dividends being paid.' : ''}</div>`;
   }
 
   // ---------- forecast ----------
@@ -1002,6 +1162,12 @@
     html += `<div>${esc(f.summary || '')}</div>`;
     if (f.news_impact) html += `<h4>News impact</h4><div>${esc(f.news_impact)}</div>`;
     if (f.dividend_note) html += `<h4>Dividend effect</h4><div>${esc(f.dividend_note)}</div>`;
+    if (f.valuation || f.valuation_note) {
+      html += `<h4>Statistical position</h4>`;
+      if (f.valuation) html += `<div class="fc-badges" style="margin:0 0 6px"><span class="badge conf">${esc(f.valuation)}</span>` +
+        `${j.valuation && j.valuation.composite != null ? `<span class="badge conf">${fmt(j.valuation.composite)}σ</span>` : ''}</div>`;
+      if (f.valuation_note) html += `<div>${esc(f.valuation_note)}</div>`;
+    }
     if (f.support != null || f.resistance != null) {
       html += `<div class="fc-levels">
         <div class="tile"><div class="k">Support</div><div class="v">${fmt(f.support)}</div></div>
@@ -1190,7 +1356,7 @@
   setInterval(loadNews, 300000);  // news refreshes every 5 minutes
 
   renderRanges(); renderWatchlist(); paintOpts();
-  loadSelected(); refreshWatchlistQuotes(); loadNews(); loadDividends(); renderTrack();
+  loadSelected(); refreshWatchlistQuotes(); loadNews(); loadDividends(); loadValuation(); renderTrack();
 })();
 </script>
 </body>

@@ -1,6 +1,7 @@
 // POST /api/forecast  { symbol }  -> AI outlook from NVIDIA Nemotron
 // Requires env var NVIDIA_API_KEY (set it in Vercel project settings).
-import { getChart, getNews, getDividends, dividendContext, sendJson } from './_yahoo.js';
+import { getChart, getNews, getDividendData, dividendContext, sendJson } from './_yahoo.js';
+import { valuationSummary, dailySigma, projectedRange } from './_analysis.js';
 
 const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const MODEL = process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-super-120b-a12b';
@@ -23,16 +24,19 @@ function buildStats(data) {
   const mean = rets.reduce((a, b) => a + b, 0) / (rets.length || 1);
   const variance = rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length > 1 ? rets.length - 1 : 1);
   const dailyVol = Math.sqrt(variance) * 100;
+  const win3m = closes.slice(-64);
   return {
     last: round2(last),
     change1w: round2(pct(last, closes[closes.length - 6] ?? closes[0])),
     change1m: round2(pct(last, closes[closes.length - 22] ?? closes[0])),
-    change3m: round2(pct(last, closes[0])),
+    change3m: round2(pct(last, closes[closes.length - 64] ?? closes[0])),
+    change1y: round2(pct(last, closes[0])),
     sma20: round2(sma(closes, 20)),
     sma50: round2(sma(closes, 50)),
+    sma200: round2(sma(closes, 200)),
     dailyVolPct: round2(dailyVol),
-    high3m: round2(Math.max(...closes)),
-    low3m: round2(Math.min(...closes)),
+    high3m: round2(Math.max(...win3m)),
+    low3m: round2(Math.min(...win3m)),
     fiftyTwoWeekHigh: round2(data.fiftyTwoWeekHigh),
     fiftyTwoWeekLow: round2(data.fiftyTwoWeekLow),
   };
@@ -106,14 +110,35 @@ export default async function handler(req, res) {
       });
     }
 
-    const [data, news, divs] = await Promise.all([
-      getChart(symbol, '3mo'),
-      getNews(symbol).catch(() => []),        // news is best-effort
-      getDividends(symbol).catch(() => []),   // dividends too
+    // A full year of DAILY bars: needed for the 200-day sigma window and a
+    // meaningful trend fit. The prompt still only quotes the last 30 closes.
+    const [data, news, divData] = await Promise.all([
+      getChart(symbol, '1y', '1d'),
+      getNews(symbol).catch(() => []),                                   // best-effort
+      getDividendData(symbol).catch(() => ({ dividends: [], weekly: [] })),
     ]);
     const stats = buildStats(data);
-    const div = dividendContext(divs, stats.last);
+    const div = dividendContext(divData.dividends, stats.last);
+    const val = valuationSummary(data.points, divData.weekly, divData.dividends);
     const recent = data.points.slice(-30).map((p) => `${new Date(p.t).toISOString().slice(0, 10)}: ${p.c}`).join('\n');
+    const valBlock = val ? `
+Statistical position (sigma rule — how far price sits from its own mean, in standard deviations):
+- 20-day mean (the average): ${val.sma20} | 1σ = ${val.sigma20}
+- 20-day bands: ±1σ = ${val.band20 ? `${val.band20.lo1} (lower) – ${val.band20.hi1} (upper)` : 'n/a'} | ±2σ = ${val.band20 ? `${val.band20.lo2} (lower) – ${val.band20.hi2} (upper)` : 'n/a'}
+- vs 20-day mean: ${val.z20 ?? 'n/a'}σ
+- vs 50-day mean: ${val.z50 ?? 'n/a'}σ | vs 200-day mean: ${val.z200 ?? 'n/a'}σ
+- vs fitted 1-year log-trend: ${val.trendZ ?? 'n/a'}σ (trend value today ${val.trendFair ?? 'n/a'}, price is ${val.trendGapPct ?? 'n/a'}% away from it; trend drift ${val.trendDriftPctPerYear ?? 'n/a'}%/yr)
+- Price sits at the ${val.pricePercentile1y ?? 'n/a'}th percentile of the last year
+${val.dividendYieldPercentile != null ? `- Trailing dividend yield ${val.dividendYieldPct}%, which is the ${val.dividendYieldPercentile}th percentile of its own 5-year range (HIGHER percentile = price low relative to dividends = cheaper than usual)` : ''}
+- Composite read: ${val.verdict}
+
+How to use this:
+* Under the empirical (sigma) rule ~68% of observations fall within 1σ, ~95% within 2σ. So |z| > 2 means the price is in an unusual position relative to its own recent behaviour.
+* This is a STATISTICAL STRETCH measure, not a valuation of the business — it says nothing about earnings, assets or growth. Do not call a stock "undervalued" on this basis alone; say "statistically stretched low" or similar.
+* Mean reversion is NOT automatic. In a strong trend a stock can hold above +2σ for weeks, and a deteriorating one can keep making new lows below -2σ. Weigh the z-scores against the direction of the 200-day mean and the trend drift before predicting a snap back.
+* The trend-residual z is usually the fairer read for a trending stock; the 20-day z is the better read for a range-bound one.
+` : '';
+
     const iso = (t) => new Date(t).toISOString().slice(0, 10);
     // The forecast window in real dates, so the model can place an ex-date inside it.
     const horizonDates = (() => {
@@ -125,6 +150,22 @@ export default async function handler(req, res) {
       }
       return out;
     })();
+
+    // The naive volatility-only envelope for each forecast day. Handing this to
+    // the model gives its low/high bands something to be calibrated against —
+    // without it, stated ranges came back wildly over- and under-confident.
+    const sigmaD = dailySigma(data.points.map((p) => p.c));
+    const projected = projectedRange(stats.last, sigmaD, 7);
+    const projBlock = projected ? `
+Statistically plausible range for each forecast day (this stock's own daily volatility of ${round2(sigmaD * 100)}%/day, zero drift — the naive benchmark). Note the range widens with the SQUARE ROOT of time, so day 7 is only ~2.6x as wide as day 1, not 7x:
+${projected.map((p, i) => `- Day ${p.d} (${horizonDates[i]}): 50% chance between ${p.p25} and ${p.p75}; 80% chance between ${p.p10} and ${p.p90}`).join('\n')}
+
+CALIBRATION RULES — apply these to the numbers you output:
+* Your "low" and "high" for each day must be broadly consistent with the 80% range above. A much narrower band claims more precision than this stock's volatility supports; a much wider one is uninformative. Widen the band as the horizon grows.
+* Your "price" for each day is your call about WHERE INSIDE that range the stock lands. Putting it outside the 80% range is allowed, but only with a stated reason (a news catalyst, an ex-dividend adjustment, or a strong established trend) — say so in valuation_note.
+* Anchor support/resistance to real levels: the 20-day mean, the ±1σ/±2σ band edges, the 3-month range and the 52-week range above, rather than round numbers.
+* Sanity check before answering: does your day-7 price imply a move this stock plausibly makes in 7 sessions given ${round2(sigmaD * 100)}% daily volatility? If not, pull it back toward the range.
+` : '';
 
     const divBlock = div ? `
 Dividend context (${data.currency}):
@@ -151,16 +192,16 @@ CRITICAL — dividend arithmetic:
 
 Stock: ${data.name} (${data.symbol}), ${data.exchange}, currency ${data.currency}
 Current price: ${stats.last}
-Performance: 1w ${stats.change1w}%, 1m ${stats.change1m}%, 3m ${stats.change3m}%
-20-day SMA: ${stats.sma20} | 50-day SMA: ${stats.sma50}
+Performance: 1w ${stats.change1w}%, 1m ${stats.change1m}%, 3m ${stats.change3m}%, 1y ${stats.change1y}%
+20-day SMA: ${stats.sma20} | 50-day SMA: ${stats.sma50} | 200-day SMA: ${stats.sma200}
 Daily volatility: ${stats.dailyVolPct}%
 3-month range: ${stats.low3m} - ${stats.high3m}
 52-week range: ${stats.fiftyTwoWeekLow} - ${stats.fiftyTwoWeekHigh}
 
 Last 30 daily closes:
 ${recent}
-${divBlock}${newsBlock}
-Weigh the price action, the dividend calendar AND the news headlines. If a headline is significant (earnings, guidance, regulation, M&A), let it influence the outlook and predictions.
+${valBlock}${projBlock}${divBlock}${newsBlock}
+Weigh the price action, the statistical position, the dividend calendar AND the news headlines. If a headline is significant (earnings, guidance, regulation, M&A), let it influence the outlook and predictions.
 
 Respond with ONLY a JSON object, no other text:
 {
@@ -173,6 +214,8 @@ Respond with ONLY a JSON object, no other text:
   "risks": ["2-3 short bullet strings: what could invalidate this outlook"],
   "news_impact": "1-2 sentences: how the recent headlines affect this outlook (omit or null if no news was provided)",
   "dividend_note": "1-2 sentences: whether an ex-dividend date falls in the forecast window and how you adjusted the predicted prices for it, or how a recent ex-date distorted the price history (null if no dividend data was provided)",
+  "valuation": "stretched low" | "below trend" | "near trend" | "above trend" | "stretched high",
+  "valuation_note": "1-2 sentences citing the actual sigma numbers: where the price sits statistically, whether you expect mean reversion inside the forecast window, and why (or why not, if the trend argues against it). Null if no statistical position was provided.",
   "predictions": [
     {"d": 1, "price": <predicted close after 1 trading day>, "low": <plausible low>, "high": <plausible high>},
     {"d": 2, "price": ..., "low": ..., "high": ...},
@@ -280,6 +323,8 @@ The predicted low/high band should widen with the horizon, consistent with the s
       stats,
       newsUsed: news.slice(0, 8).length,
       dividends: div,
+      valuation: val,
+      projected,
       provider,
       model: usedModel,
       forecast: parsed,

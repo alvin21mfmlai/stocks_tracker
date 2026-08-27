@@ -28,6 +28,8 @@ The browser never talks to Yahoo or NVIDIA directly — always through your own
 | `api/search.js` | `GET /api/search?q=` → ticker search results |
 | `api/news.js` | `GET /api/news?symbol=` → latest headlines |
 | `api/dividends.js` | `GET /api/dividends?symbol=&price=` → ex-dividend history + derived cycle facts |
+| `api/valuation.js` | `GET /api/valuation?symbol=` → sigma-rule stretch analysis |
+| `api/_analysis.js` | Pure statistics: z-scores, log-linear trend fit, percentiles, dividend-yield history. `_` prefix = helper, not an endpoint |
 | `api/forecast.js` | `POST /api/forecast {symbol}` → stats + Nemotron AI forecast |
 | `dev-server.js` | Local-only dev server; `MOCK=1` serves synthetic data. Never runs on Vercel |
 | `package.json` | Just sets `"type": "module"` (ESM). No dependencies |
@@ -52,16 +54,21 @@ convention. All of them delegate the real work to `_yahoo.js` and reply through
   falling back to the search endpoint filtered by `relatedTickers`. Returns
   `[{title, publisher, link, publishedAt}]` sorted newest first, or `[]` — an
   empty list beats unrelated headlines, which would also poison the prompt.
-- `getDividends(symbol)` — pulls the chart API's `events.dividends` stream (no
-  key needed), returning `[{exDate, amount}]`. `dividendContext(divs, price)`
+- `getDividendData(symbol)` — pulls the chart API's `events.dividends` stream
+  **and** the 5-year weekly closes from the same request (the closes are what
+  make a dividend-yield history possible without a second round trip).
+  `getDividends(symbol)` is the thin wrapper returning just `[{exDate, amount}]`.
+  `dividendContext(divs, price)`
   turns that into the facts a forecaster needs: cadence, median gap, trailing-12m
   total and yield, days since the last ex-date, and a **projected** next ex-date
   (last + median gap — a cycle estimate, not a company filing).
 
 `forecast.js` is the most involved:
 
-1. Fetches 3 months of history, news, and dividends in parallel (news and
-   dividend failures are ignored — the forecast still runs without them).
+1. Fetches **one year of daily bars**, news, and dividend data in parallel (news
+   and dividend failures are ignored — the forecast still runs without them).
+   A year of dailies is what the 200-day sigma window and the trend fit need;
+   the prompt still only quotes the last 30 closes.
 2. `buildStats()` computes SMA20/50, 1w/1m/3m changes, daily log-return
    volatility, ranges — plain math, no model.
 3. Builds a prompt embedding the stats, last 30 closes, up to 8 headlines, and a
@@ -123,6 +130,13 @@ comment:
   is removed on purpose, so the cone's centre is a flat random walk — the naive
   baseline the AI line is meant to be judged against. Computed once per data
   load (in `loadSelected`) and cached in `mc`, so re-renders stay stable.
+- `sigmaBands()` / `valuation` — `sigmaBands()` computes the rolling 20-period
+  mean ±1σ/±2σ over the displayed bars in a single pass (client-side, free);
+  `loadValuation()` fetches the deeper `/api/valuation` numbers, which need more
+  history than the visible range, and `renderValuation()` draws the gauge. The
+  gauge is plain HTML/CSS — a gradient track with zone stops at ±1σ and ±2σ, an
+  absolutely-positioned marker for the composite and thin ticks for its inputs
+  — so text stays at real font sizes and it scales without distortion.
 - `track record` — `logForecast()` appends each forecast to `ls_fclog`;
   `renderTrack()` fetches 6 months of actual closes per logged symbol, matches
   each prediction to the nearest real trading day (within 2.5 days, and only

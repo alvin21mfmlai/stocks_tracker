@@ -17,8 +17,8 @@ async function yahooJson(path) {
 // range -> sensible interval
 const INTERVALS = { '1d': '5m', '5d': '30m', '1mo': '1d', '3mo': '1d', '6mo': '1d', '1y': '1wk', '2y': '1wk', '5y': '1mo' };
 
-export async function getChart(symbol, range = '1mo') {
-  const interval = INTERVALS[range] || '1d';
+export async function getChart(symbol, range = '1mo', intervalOverride = null) {
+  const interval = intervalOverride || INTERVALS[range] || '1d';
   const j = await yahooJson(
     `/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&includePrePost=false&events=div%2Csplit`
   );
@@ -78,25 +78,40 @@ export async function searchSymbols(q) {
 // Dividend history straight from the chart API's event stream (no key needed).
 // Ex-dividend dates matter because the price mechanically drops by roughly the
 // dividend amount on that day — a move no price-only model can anticipate.
-export async function getDividends(symbol) {
+// Returns BOTH the dividend events and the long-run weekly closes from the same
+// request — the closes are what make a dividend-yield history possible without
+// a second round trip.
+export async function getDividendData(symbol) {
   const parse = (j) => {
-    const divs = j?.chart?.result?.[0]?.events?.dividends || {};
-    return Object.values(divs)
+    const res = j?.chart?.result?.[0];
+    const divs = res?.events?.dividends || {};
+    const dividends = Object.values(divs)
       .map((d) => ({ exDate: (d.date ?? 0) * 1000, amount: Number(d.amount) }))
       .filter((d) => d.exDate > 0 && Number.isFinite(d.amount) && d.amount > 0)
       .sort((a, b) => a.exDate - b.exDate);
+    const ts = res?.timestamp || [];
+    const cl = res?.indicators?.quote?.[0]?.close || [];
+    const weekly = [];
+    for (let i = 0; i < ts.length; i++) if (cl[i] != null) weekly.push({ t: ts[i] * 1000, c: cl[i] });
+    return { dividends, weekly };
   };
   const tries = [
     `/v8/finance/chart/${encodeURIComponent(symbol)}?range=5y&interval=1wk&events=div`,
     `/v8/finance/chart/${encodeURIComponent(symbol)}?range=2y&interval=1d&events=div`,
   ];
+  let best = { dividends: [], weekly: [] };
   for (const path of tries) {
     try {
       const out = parse(await yahooJson(path));
-      if (out.length) return out;
+      if (out.dividends.length) return out;
+      if (out.weekly.length > best.weekly.length) best = out;
     } catch {}
   }
-  return [];
+  return best;
+}
+
+export async function getDividends(symbol) {
+  return (await getDividendData(symbol)).dividends;
 }
 
 // Turn raw dividend events into the facts a forecaster actually needs.

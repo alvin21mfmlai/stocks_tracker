@@ -10,6 +10,12 @@ A live stock viewer with AI forecasting, powered by Yahoo Finance data and NVIDI
   so you can see whether the model's call is bold or just tracking the drift
 - **News pins on the chart**: headlines appear as markers at their publication
   date — hover to read, click to open
+- **Sigma-rule valuation**: a "Valuation & stretch" panel showing how far the
+  price sits from its own mean in standard deviations (vs the 20/50/200-day
+  means and vs a fitted 1-year trend), its 1-year price percentile, and its
+  dividend yield versus its own 5-year range — plus optional ±1σ/±2σ bands on
+  the chart. All of it is fed to the model, which reports back where the price
+  sits statistically and whether it expects mean reversion
 - **Dividend awareness**: past ex-dividend dates are marked on the chart (`D`),
   the projected next one is marked inside the forecast window (`D?`), and the
   full dividend cycle is fed to the model — on an ex-date the price drops
@@ -41,6 +47,8 @@ api/stock.js      GET  /api/stock?symbol=NVDA&range=1mo  → quote + price serie
 api/search.js     GET  /api/search?q=dbs                 → ticker search
 api/news.js       GET  /api/news?symbol=NVDA             → latest headlines
 api/dividends.js  GET  /api/dividends?symbol=O39.SI      → ex-dates + cycle facts
+api/valuation.js  GET  /api/valuation?symbol=D05.SI      → sigma-rule stretch analysis
+api/_analysis.js  z-scores, trend fit, percentiles (not an endpoint)
 api/forecast.js   POST /api/forecast {symbol}            → Nemotron AI outlook
 api/_yahoo.js     shared Yahoo Finance helpers (not exposed as an endpoint)
 dev-server.js     local dev server (optional)

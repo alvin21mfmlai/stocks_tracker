@@ -18,8 +18,15 @@ function mockChart(symbol, range) {
   let seed = 42 + symbol.length;
   const rnd = () => (seed = (seed * 9301 + 49297) % 233280) / 233280;
   for (let i = 0; i < n; i++) {
+    const prev = v;
     v = Math.max(base * 0.8, v * (1 + (rnd() - 0.485) * 0.02));
-    points.push({ t: now - (n - i) * step, o: v * 0.999, h: v * 1.004, l: v * 0.996, c: +v.toFixed(2), v: Math.round(1e6 * rnd()) });
+    const o = prev, c = +v.toFixed(2);
+    points.push({
+      t: now - (n - i) * step,
+      o: +o.toFixed(2), h: +(Math.max(o, c) * (1 + rnd() * 0.004)).toFixed(2),
+      l: +(Math.min(o, c) * (1 - rnd() * 0.004)).toFixed(2),
+      c, v: Math.round(1e6 * rnd()),
+    });
   }
   const price = points[points.length - 1].c;
   return {
@@ -32,14 +39,58 @@ function mockChart(symbol, range) {
     marketState: 'REGULAR', range, interval: 'mock', points,
   };
 }
-const mockNews = (symbol) => ({
-  symbol,
-  news: [
-    { title: `${symbol === 'D05.SI' ? 'DBS' : 'NVIDIA'} beats quarterly expectations as demand stays strong`, publisher: 'Reuters', link: 'https://example.com/1', publishedAt: Date.now() - 3 * 36e5 },
-    { title: 'Analysts raise price targets ahead of earnings season', publisher: 'Bloomberg', link: 'https://example.com/2', publishedAt: Date.now() - 9 * 36e5 },
-    { title: 'Sector rotation puts spotlight on large caps', publisher: 'CNBC', link: 'https://example.com/3', publishedAt: Date.now() - 26 * 36e5 },
-    { title: 'Market wrap: stocks drift as investors weigh rate outlook', publisher: 'Yahoo Finance', link: 'https://example.com/4', publishedAt: Date.now() - 50 * 36e5 },
-  ],
+const mockNews = (symbol) => {
+  const co = symbol === 'D05.SI' ? 'DBS' : symbol === 'O39.SI' ? 'OCBC' : 'NVIDIA';
+  const H = 36e5;
+  return {
+    symbol,
+    news: [
+      { title: `${co} beats quarterly expectations as demand stays strong`, publisher: 'Reuters', link: 'https://example.com/1', publishedAt: Date.now() - 3 * H },
+      { title: 'Analysts raise price targets ahead of earnings season', publisher: 'Bloomberg', link: 'https://example.com/2', publishedAt: Date.now() - 9 * H },
+      { title: 'Sector rotation puts spotlight on large caps', publisher: 'CNBC', link: 'https://example.com/3', publishedAt: Date.now() - 26 * H },
+      { title: 'Market wrap: stocks drift as investors weigh rate outlook', publisher: 'Yahoo Finance', link: 'https://example.com/4', publishedAt: Date.now() - 3 * 24 * H },
+      { title: `${co} announces expanded buyback programme`, publisher: 'Business Times', link: 'https://example.com/5', publishedAt: Date.now() - 8 * 24 * H },
+      { title: 'Regulators signal lighter capital requirements for the sector', publisher: 'Financial Times', link: 'https://example.com/6', publishedAt: Date.now() - 14 * 24 * H },
+      { title: `${co} lifts full-year guidance after strong first half`, publisher: 'Reuters', link: 'https://example.com/7', publishedAt: Date.now() - 21 * 24 * H },
+    ],
+  };
+};
+const mockDividends = (symbol) => {
+  const DAY = 864e5;
+  const sg = /\.SI$/.test(symbol);
+  const gap = sg ? 182 : 91;                       // semi-annual vs quarterly
+  const amt = sg ? 0.42 : 0.01;
+  const lastAgo = sg ? 4 : 30;                     // SG bank went ex 4 days ago
+  const dividends = Array.from({ length: 8 }, (_, i) => ({
+    exDate: Date.now() - (lastAgo + (7 - i) * gap) * DAY,
+    amount: +(amt * (1 + i * 0.02)).toFixed(4),
+  })).sort((a, b) => a.exDate - b.exDate);
+  const last = dividends[dividends.length - 1];
+  const ttm = dividends.filter((d) => d.exDate > Date.now() - 365 * DAY).reduce((a, b) => a + b.amount, 0);
+  const price = sg ? 31.44 : 178;
+  return {
+    symbol, dividends,
+    context: {
+      lastExDate: last.exDate, lastAmount: last.amount, daysSinceLastEx: lastAgo,
+      typicalAmount: +amt.toFixed(4), ttmTotal: +ttm.toFixed(4),
+      yieldPct: +((ttm / price) * 100).toFixed(2),
+      cadence: sg ? 'semi-annual' : 'quarterly', medianGapDays: gap,
+      nextExDateEst: last.exDate + gap * DAY,
+      daysToNextEst: gap - lastAgo,
+      history: dividends.slice(-8),
+    },
+  };
+};
+const mockValuation = (symbol) => ({
+  symbol, name: symbol, currency: /\.SI$/.test(symbol) ? 'SGD' : 'USD',
+  valuation: {
+    price: 31.44, z20: -2.14, z50: -0.86, z200: 0.42,
+    sma20: 32.61, sigma20: 0.55, dailySigmaPct: 0.94,
+    band20: { lo1: 32.06, hi1: 33.16, lo2: 31.51, hi2: 33.71 },
+    trendZ: -1.32, trendFair: 32.18, trendDriftPctPerYear: 11.4, trendGapPct: -2.3,
+    pricePercentile1y: 38, dividendYieldPct: 5.34, dividendYieldPercentile: 82,
+    daysUsed: 251, composite: -1.73, verdict: 'below its mean',
+  },
 });
 const mockSearch = (q) => ({
   results: [
@@ -72,6 +123,9 @@ const mockForecast = (symbol) => {
       drivers: ['Sustained trend above 20/50-day SMAs', 'Higher lows over the past month', 'Volatility compressing near highs'],
       risks: ['A close below the 20-day SMA would weaken the setup', 'Broad market pullback'],
       news_impact: 'Recent earnings-beat coverage and raised analyst targets support the bullish tilt; no negative catalysts in the latest headlines.',
+      dividend_note: 'The stock went ex-dividend 4 sessions ago, so roughly 0.42 of the recent decline is mechanical rather than a change in sentiment. No further ex-date falls inside this forecast window.',
+      valuation: 'below trend',
+      valuation_note: 'At -2.1σ against its 20-day mean the price is statistically stretched low, but only -1.3σ against the rising 1-year trend, so this looks like a pullback within an uptrend rather than a cheap price. A partial drift back toward the 20-day mean is plausible inside the window.',
       predictions: preds,
     },
     generatedAt: Date.now(),
@@ -91,6 +145,8 @@ const server = http.createServer(async (req, res) => {
         if (url.pathname === '/api/stock') return res.end(JSON.stringify(mockChart(url.searchParams.get('symbol'), url.searchParams.get('range') || '1mo')));
         if (url.pathname === '/api/search') return res.end(JSON.stringify(mockSearch(url.searchParams.get('q') || '')));
         if (url.pathname === '/api/news') return res.end(JSON.stringify(mockNews(url.searchParams.get('symbol') || 'NVDA')));
+        if (url.pathname === '/api/dividends') return res.end(JSON.stringify(mockDividends(url.searchParams.get('symbol') || 'NVDA')));
+        if (url.pathname === '/api/valuation') return res.end(JSON.stringify(mockValuation(url.searchParams.get('symbol') || 'NVDA')));
         if (url.pathname === '/api/forecast') {
           const chunks = []; for await (const c of req) chunks.push(c);
           let symbol = 'NVDA';
