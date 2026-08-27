@@ -6,7 +6,7 @@ import { valuationSummary, dailySigma, projectedRange } from './_analysis.js';
 const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const MODEL = process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-super-120b-a12b';
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5-mini';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5';
 
 function pct(a, b) { return b ? ((a - b) / b) * 100 : 0; }
 function sma(arr, n) {
@@ -127,7 +127,7 @@ Statistical position (sigma rule — how far price sits from its own mean, in st
 - 20-day bands: ±1σ = ${val.band20 ? `${val.band20.lo1} (lower) – ${val.band20.hi1} (upper)` : 'n/a'} | ±2σ = ${val.band20 ? `${val.band20.lo2} (lower) – ${val.band20.hi2} (upper)` : 'n/a'}
 - vs 20-day mean: ${val.z20 ?? 'n/a'}σ
 - vs 50-day mean: ${val.z50 ?? 'n/a'}σ | vs 200-day mean: ${val.z200 ?? 'n/a'}σ
-- vs fitted 1-year log-trend: ${val.trendZ ?? 'n/a'}σ (trend value today ${val.trendFair ?? 'n/a'}, price is ${val.trendGapPct ?? 'n/a'}% away from it; trend drift ${val.trendDriftPctPerYear ?? 'n/a'}%/yr)
+- vs fitted 1-year log-trend: ${val.trendZ ?? 'n/a'}σ (trend value today ${val.trendFair ?? 'n/a'}, price is ${val.trendGapPct ?? 'n/a'}% away from it; trend drift ${val.trendDriftPctPerYear ?? 'n/a'}%/yr; fit quality R² ${val.trendR2 ?? 'n/a'}${val.trendReliable === false ? ' — POOR FIT, a straight line does not describe this year well, so treat this trend reading as unreliable and lean on the 20/50-day figures' : ''})
 - Price sits at the ${val.pricePercentile1y ?? 'n/a'}th percentile of the last year
 ${val.dividendYieldPercentile != null ? `- Trailing dividend yield ${val.dividendYieldPct}%, which is the ${val.dividendYieldPercentile}th percentile of its own 5-year range (HIGHER percentile = price low relative to dividends = cheaper than usual)` : ''}
 - Composite read: ${val.verdict}

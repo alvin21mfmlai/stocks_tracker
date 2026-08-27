@@ -1052,7 +1052,7 @@
 
     const ticks = [];
     if (v.z20 != null) ticks.push({ z: v.z20, label: '20-day' });
-    if (v.trendZ != null) ticks.push({ z: v.trendZ, label: 'trend' });
+    if (v.trendZ != null) ticks.push({ z: v.trendZ, label: v.trendReliable === false ? 'trend (weak fit)' : 'trend' });
 
     const gauge = `<div class="gauge">
       <div class="track">
@@ -1069,10 +1069,27 @@
     const where = c == null ? 'unclear'
       : c <= -2 ? 'unusually low' : c <= -1 ? 'on the low side'
       : c < 1 ? 'about where it usually sits' : c < 2 ? 'on the high side' : 'unusually high';
-    const trendWord = v.trendDriftPctPerYear == null ? ''
-      : v.trendDriftPctPerYear > 5 ? ' The 1-year trend is still rising, which argues against a snap-back purely on stretch.'
-      : v.trendDriftPctPerYear < -5 ? ' The 1-year trend is falling, so a low reading may be the trend rather than a bargain.'
-      : ' The 1-year trend is roughly flat, the condition where mean reversion works best.';
+    // The trend only means something in combination with the SIGN of the
+    // reading — "stretched high above a falling trend" and "stretched low in a
+    // rising trend" are opposite situations.
+    const drift = v.trendDriftPctPerYear;
+    const dir = drift == null ? 'na' : drift > 5 ? 'up' : drift < -5 ? 'down' : 'flat';
+    const side = c == null ? 'mid' : c >= 1 ? 'high' : c <= -1 ? 'low' : 'mid';
+    const trendWord = ({
+      'up|low': ' The 1-year trend is rising, so this reads as a pullback within an uptrend — the setup where a move back toward the mean is most plausible.',
+      'up|high': ' The 1-year trend is rising too, so the stretch is momentum rather than excess; a stock in a strong uptrend can stay extended for weeks.',
+      'up|mid': ' The 1-year trend is rising and the price is close to where it usually sits.',
+      'down|low': ' The 1-year trend is falling, so a low reading here may be the trend itself rather than a bargain.',
+      'down|high': ' The 1-year trend is falling, so price sitting this far above it looks like a counter-trend bounce rather than strength.',
+      'down|mid': ' The 1-year trend is falling, so "normal" here means normal for a stock that has been sliding.',
+      'flat|low': ' The 1-year trend is roughly flat — the condition where mean reversion works best, so a low reading carries more weight.',
+      'flat|high': ' The 1-year trend is roughly flat — the condition where mean reversion works best, so a high reading carries more weight.',
+      'flat|mid': ' The 1-year trend is roughly flat and the price is near its usual level.',
+    })[`${dir}|${side}`] || '';
+    const fitWarn = (v.trendR2 != null && v.trendReliable === false)
+      ? `<div class="fc-note" style="margin-top:6px">A straight trend line fits this year poorly (R² ${fmt(v.trendR2)}), typically a V-shaped or choppy year.
+         The <strong>${fmt(v.trendZ)}σ</strong> trend reading overstates the stretch and is excluded from the composite — lean on the 20-day and 50-day figures instead.</div>`
+      : '';
 
     const tiles = [
       ['vs 20-day mean', v.z20 != null ? `${fmt(v.z20)}σ` : '—'],
@@ -1093,7 +1110,7 @@
         <span><span class="k kd"></span>composite ${v.composite != null ? fmt(v.composite) + 'σ' : '—'}</span>
         ${ticks.map((t) => `<span><span class="k"></span>${t.label} ${fmt(t.z)}σ</span>`).join('')}
       </div>
-      <div class="val-verdict">Price is <strong>${where}</strong> relative to its own recent behaviour.${trendWord}</div>
+      <div class="val-verdict">Price is <strong>${where}</strong> relative to its own recent behaviour.${trendWord}</div>${fitWarn}
       <div class="tiles" style="margin-top:10px">${tiles.map(([k, val]) =>
         `<div class="tile"><div class="k">${k}</div><div class="v">${val}</div></div>`).join('')}</div>
       <div class="fc-note">Sigma measures how far price sits from its own mean (~68% of days fall within 1σ, ~95% within 2σ).
