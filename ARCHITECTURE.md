@@ -105,8 +105,22 @@ Monte Carlo cone), `newsItems` (headlines, also used for chart pins), `opts`
 (chart display toggles, persisted as `ls_chartopts`), `FC_RANGES` (which ranges
 show the forecast overlay and cone).
 
+**Themed lists.** The sidebar shows one *list* at a time, chosen from a dropdown.
+`SECTORS` (state section) defines the built-in industry lists as
+`{id, name, tickers}` — edit that array to add or change an industry. "My
+watchlist" is always the first option and is still backed by `DEFAULTS` +
+`ls_watchlist`. Everything else reads through `listTickers(id)` /
+`setListTickers(id, arr)`: a built-in list falls back to its `SECTORS` tickers
+until this browser edits it, at which point the edited copy lives in
+`ls_list_edits[id]` and a "Reset to default" action appears. User-made lists are
+recorded in `ls_custom_lists`, with their tickers in the same `ls_list_edits`
+map. `renderListBar()` draws the dropdown (grouped: mine / Industries / My
+lists), the count and the contextual action buttons; `switchList(id)` changes
+list and re-points `selected` if the current symbol isn't in the new one.
+
 **Browser storage keys**: `ls_watchlist`, `ls_seeded`, `ls_provider`,
-`ls_chartopts`, `ls_fclog` (the forecast track record).
+`ls_chartopts`, `ls_fclog` (the forecast track record), `ls_list_edits`,
+`ls_custom_lists`, `ls_active_list`.
 
 **JS sections**, in file order, each marked with a `// ---------- name ----------`
 comment:
@@ -143,10 +157,15 @@ comment:
   after the forecast was made), then aggregates direction accuracy, median
   absolute % error per horizon bucket, and band coverage.
 - `ranges` — the 1D…5Y buttons.
-- `watchlist` — `renderWatchlist()` (cards from `quoteCache`), click-to-select,
-  ✕-to-remove, `refreshWatchlistQuotes()`.
-- `search` — debounced (300ms) dropdown; picking a result adds to watchlist and
-  selects it.
+- `themed lists` — `SECTORS`, the `listTickers`/`setListTickers` accessors,
+  `renderListBar()` and `switchList()`; the action bar handles New list / Copy
+  to My watchlist / Reset to default / Delete list.
+- `watchlist` — `renderWatchlist()` renders `listTickers(activeList)` (cards
+  from `wlCache`), click-to-select, ✕-to-remove-from-the-active-list.
+  `refreshWatchlistQuotes()` fetches only rows missing from `wlCache` (cheap on
+  list switches); `repriceWatchlist()` is the full 60-second refresh.
+- `search` — debounced (300ms) dropdown; picking a result adds it to **whichever
+  list is showing**, so a list can be built by searching.
 - `news` — `loadNews()` fills the news card; guards against the user switching
   stocks mid-fetch.
 - `forecast` — button handler POSTs `/api/forecast`, `renderForecast(j)` builds
@@ -170,7 +189,8 @@ state" throughout — no virtual DOM, no partial updates.
 | News pin clustering distance | the `< 16` pixel test in the marks loop |
 | Default chart toggles | the `opts` object (users' choices override via `ls_chartopts`) |
 | Track-record horizon buckets | `buckets` in `renderTrack()` |
-| Default watchlist | `DEFAULTS` array (state section) — only affects fresh browsers; localStorage wins |
+| Default watchlist | `DEFAULTS` array (state section); new entries merge in via `ls_seeded` |
+| Industry lists (cyber, biomed, …) | `SECTORS` array (state section) — `{id, name, tickers}`; keep ids stable |
 | Chart size, paddings, tick count | constants at top of `renderChart()` |
 | Available time ranges | `RANGES` (frontend) + `INTERVALS` (`_yahoo.js`) + `RANGES` allowlist (`api/stock.js`) |
 | Refresh cadence | `setInterval` calls at the bottom of the script |
@@ -188,6 +208,10 @@ state" throughout — no virtual DOM, no partial updates.
   endpoint automatically.
 - The watchlist you see in your own browser comes from localStorage, not
   `DEFAULTS` — clear the `ls_watchlist` key to re-test defaults.
+- Editing a `SECTORS` list in code will NOT change it in a browser that has
+  already edited that same list — `ls_list_edits[id]` wins. "Reset to default"
+  clears the override. Changing a list's `id` orphans its edits (harmless, but
+  the old key lingers).
 - `dev-server.js` mock mode intercepts `/api/*` before the real modules, so
   mock shapes must mirror the real API responses when you add fields.
 - Yahoo's endpoints are unofficial: no auth, but keep the User-Agent header and

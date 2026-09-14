@@ -25,6 +25,11 @@ A live stock viewer with AI forecasting, powered by Yahoo Finance data and NVIDI
   against what actually happened (direction accuracy, median price error by
   horizon, how often the real close landed inside the predicted band)
 - Watchlist rows show a 30-day sparkline alongside the price
+- **Switchable industry lists**: a dropdown above the watchlist swaps between
+  your own list and curated industry lists (Cybersecurity, Biomedical,
+  Semiconductors, Singapore banks, Precious metals). Edit the `SECTORS` array in
+  `index.html` to change them, or build your own lists in the UI — search adds
+  to whichever list is showing, and "Copy to My watchlist" merges one in
 - Default watchlist: **NVDA** and **DBS** (`D05.SI` on SGX) — add more via search
 - One-click AI forecast: the last 3 months of price action + computed stats
   (SMAs, volatility, ranges) are sent to Nemotron, which returns an outlook,

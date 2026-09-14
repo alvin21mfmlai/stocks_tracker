@@ -179,6 +179,22 @@
 
   /* ---- watchlist ---- */
   .side h3 { font-size: 13px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px; }
+  /* ---- list switcher ---- */
+  .wl-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .wl-head select {
+    flex: 1 1 auto; min-width: 0; font-family: inherit; font-size: 13px; font-weight: 700;
+    padding: 7px 8px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface-1); color: var(--text-primary); cursor: pointer;
+  }
+  .wl-head select:focus { outline: none; border-color: var(--series-1); }
+  .wl-count { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+  .wl-actions { display: flex; gap: 2px; flex-wrap: wrap; margin-bottom: 10px; min-height: 18px; }
+  .wl-actions button {
+    border: 0; background: none; color: var(--text-muted); font-family: inherit;
+    font-size: 11px; cursor: pointer; padding: 3px 6px; border-radius: 5px;
+  }
+  .wl-actions button:hover { background: var(--wash); color: var(--text-primary); }
+  .wl-actions button.danger:hover { color: var(--delta-down); }
   .wl-item {
     display: flex; align-items: center; gap: 8px; width: 100%;
     padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
@@ -347,7 +363,11 @@
 
     <div class="side">
       <div class="card" style="margin-bottom:16px">
-        <h3>Watchlist</h3>
+        <div class="wl-head">
+          <select id="listSel" aria-label="Choose watchlist"></select>
+          <span class="wl-count" id="listCount"></span>
+        </div>
+        <div class="wl-actions" id="listActions"></div>
         <div id="watchlist"></div>
       </div>
       <div class="card">
@@ -411,6 +431,118 @@
   const saveOpts = () => { try { localStorage.setItem('ls_chartopts', JSON.stringify(opts)); } catch {} };
 
   const saveWl = () => { try { localStorage.setItem('ls_watchlist', JSON.stringify(watchlist)); } catch {} };
+
+  // ---------- themed lists ----------
+  // Curated industry watchlists. Add, remove or reorder freely — each entry is
+  // just {id, name, tickers}. The id must stay stable: it keys any edits a
+  // browser has made to that list. "My watchlist" is always the first option.
+  const SECTORS = [
+    { id: 'cyber',  name: 'Cybersecurity',   tickers: ['PANW', 'CRWD', 'FTNT', 'ZS', 'NET', 'S', 'OKTA', 'CIBR'] },
+    { id: 'biomed', name: 'Biomedical',      tickers: ['LLY', 'NVO', 'VRTX', 'REGN', 'AMGN', 'GILD', 'ISRG', 'XBI'] },
+    { id: 'semis',  name: 'Semiconductors',  tickers: ['NVDA', 'AMD', 'TSM', 'ASML', 'AVGO', 'MU', 'ARM', 'SMH'] },
+    { id: 'sgbank', name: 'Singapore banks', tickers: ['D05.SI', 'O39.SI', 'U11.SI'] },
+    { id: 'metals', name: 'Precious metals', tickers: ['GFI', 'NEM', 'AEM', 'GLD', 'SLV', 'SLVP'] },
+  ];
+
+  // Per-browser state: edits to any list, plus lists the user created in the UI.
+  let listEdits = {};        // { listId: [tickers] } — overrides a SECTORS default
+  let customLists = [];      // [{ id, name }] — user-created, tickers live in listEdits
+  let activeList = 'mine';
+  try {
+    listEdits = JSON.parse(localStorage.getItem('ls_list_edits') || '{}') || {};
+    customLists = JSON.parse(localStorage.getItem('ls_custom_lists') || '[]') || [];
+    activeList = localStorage.getItem('ls_active_list') || 'mine';
+  } catch {}
+  const saveLists = () => {
+    try {
+      localStorage.setItem('ls_list_edits', JSON.stringify(listEdits));
+      localStorage.setItem('ls_custom_lists', JSON.stringify(customLists));
+      localStorage.setItem('ls_active_list', activeList);
+    } catch {}
+  };
+
+  const isCustom = (id) => customLists.some((l) => l.id === id);
+  const sectorDef = (id) => SECTORS.find((s) => s.id === id);
+  const listName = (id) => id === 'mine' ? 'My watchlist'
+    : (sectorDef(id) || customLists.find((l) => l.id === id) || {}).name || id;
+  // A built-in list counts as "edited" once this browser has changed it.
+  const isEdited = (id) => id !== 'mine' && !isCustom(id) && Array.isArray(listEdits[id]);
+
+  function listTickers(id) {
+    if (id === 'mine') return watchlist;
+    if (Array.isArray(listEdits[id])) return listEdits[id];
+    const s = sectorDef(id);
+    return s ? s.tickers.slice() : [];
+  }
+  function setListTickers(id, arr) {
+    if (id === 'mine') { watchlist = arr; saveWl(); }
+    else { listEdits[id] = arr; saveLists(); }
+  }
+  // Fall back to "My watchlist" if a stored id no longer exists in the code.
+  if (activeList !== 'mine' && !sectorDef(activeList) && !isCustom(activeList)) activeList = 'mine';
+  // `selected` was seeded from the personal list above; realign it to whichever
+  // list is actually showing.
+  if (!listTickers(activeList).includes(selected)) selected = listTickers(activeList)[0] || selected;
+
+  function renderListBar() {
+    const groups = [
+      ['', [{ id: 'mine', name: 'My watchlist' }]],
+      ['Industries', SECTORS.map((s) => ({ id: s.id, name: s.name }))],
+      ['My lists', customLists],
+    ];
+    $('listSel').innerHTML = groups.map(([label, items]) => {
+      if (!items.length) return '';
+      const opts = items.map((o) =>
+        `<option value="${esc(o.id)}"${o.id === activeList ? ' selected' : ''}>${esc(o.name)}</option>`).join('');
+      return label ? `<optgroup label="${label}">${opts}</optgroup>` : opts;
+    }).join('');
+
+    const n = listTickers(activeList).length;
+    $('listCount').textContent = n ? `${n} stock${n === 1 ? '' : 's'}` : '';
+
+    const acts = [`<button data-a="new">＋ New list</button>`];
+    if (activeList !== 'mine') acts.push(`<button data-a="copy">Copy to My watchlist</button>`);
+    if (isEdited(activeList)) acts.push(`<button data-a="reset">Reset to default</button>`);
+    if (isCustom(activeList)) acts.push(`<button data-a="del" class="danger">Delete list</button>`);
+    $('listActions').innerHTML = acts.join('');
+  }
+
+  function switchList(id) {
+    activeList = id; saveLists();
+    const t = listTickers(id);
+    if (t.length && !t.includes(selected)) {
+      selected = t[0];
+      loadSelected(); resetForecast(); loadNews(); loadDividends(); loadValuation();
+    }
+    renderListBar(); renderWatchlist(); refreshWatchlistQuotes();
+  }
+
+  $('listSel').addEventListener('change', (e) => switchList(e.target.value));
+  $('listActions').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-a]'); if (!b) return;
+    const a = b.dataset.a;
+    if (a === 'new') {
+      const name = (prompt('Name this list (e.g. Renewables, REITs):') || '').trim();
+      if (!name) return;
+      const id = 'c_' + Date.now().toString(36);
+      customLists.push({ id, name });
+      listEdits[id] = [];
+      switchList(id);
+    } else if (a === 'copy') {
+      const merged = watchlist.slice();
+      for (const s of listTickers(activeList)) if (!merged.includes(s)) merged.push(s);
+      setListTickers('mine', merged);
+      switchList('mine');
+    } else if (a === 'reset') {
+      delete listEdits[activeList]; saveLists();
+      renderListBar(); renderWatchlist(); refreshWatchlistQuotes();
+    } else if (a === 'del') {
+      if (!confirm(`Delete the list "${listName(activeList)}"? The stocks themselves are not affected.`)) return;
+      customLists = customLists.filter((l) => l.id !== activeList);
+      delete listEdits[activeList];
+      switchList('mine');
+    }
+  });
 
   // ---------- theme ----------
   $('themeBtn').addEventListener('click', () => {
@@ -901,7 +1033,7 @@
   }
 
   function renderWatchlist() {
-    $('watchlist').innerHTML = watchlist.map((s) => {
+    $('watchlist').innerHTML = listTickers(activeList).map((s) => {
       const q = wlCache[s];
       const pts = q && q.points ? q.points.slice(-30) : null;
       // Day change straight from the series: last close vs the one before it.
@@ -922,16 +1054,23 @@
         <span class="c chg ${cls}">${chg == null ? '' : arrow + fmt(Math.abs(pc)) + '%'}</span></span>
         <span class="rm" data-rm="${s}" title="Remove" aria-label="Remove ${s}">✕</span>
       </button>`;
-    }).join('') || '<div class="skel">Watchlist is empty — search above to add stocks.</div>';
+    }).join('') || `<div class="skel">${activeList === 'mine'
+      ? 'Watchlist is empty — search above to add stocks.'
+      : `“${esc(listName(activeList))}” is empty — use the search box above to add stocks to it.`}</div>`;
+    $('listCount').textContent = (() => {
+      const n = listTickers(activeList).length;
+      return n ? `${n} stock${n === 1 ? '' : 's'}` : '';
+    })();
   }
   $('watchlist').addEventListener('click', (e) => {
     const rm = e.target.closest('[data-rm]');
     if (rm) {
       e.stopPropagation();
-      watchlist = watchlist.filter((s) => s !== rm.dataset.rm);
-      saveWl();
-      if (selected === rm.dataset.rm) { selected = watchlist[0] || null; if (selected) loadSelected(); }
-      renderWatchlist();
+      // Removing from a built-in industry list edits this browser's copy of it;
+      // "Reset to default" puts it back.
+      setListTickers(activeList, listTickers(activeList).filter((s) => s !== rm.dataset.rm));
+      if (selected === rm.dataset.rm) { selected = listTickers(activeList)[0] || null; if (selected) loadSelected(); }
+      renderListBar(); renderWatchlist();
       return;
     }
     const item = e.target.closest('.wl-item'); if (!item) return;
@@ -940,7 +1079,15 @@
 
   async function refreshWatchlistQuotes() {
     // 1mo of daily bars powers both the price/change and the row sparkline.
-    await Promise.all(watchlist.map(async (s) => {
+    await Promise.all(listTickers(activeList).map(async (s) => {
+      if (wlCache[s]) return;   // cached across list switches
+      try { wlCache[s] = await api(`/api/stock?symbol=${encodeURIComponent(s)}&range=1mo`); } catch {}
+    }));
+    renderWatchlist();
+  }
+  // Full refresh on the 60s timer — the cache above only skips the initial fetch.
+  async function repriceWatchlist() {
+    await Promise.all(listTickers(activeList).map(async (s) => {
       try { wlCache[s] = await api(`/api/stock?symbol=${encodeURIComponent(s)}&range=1mo`); } catch {}
     }));
     renderWatchlist();
@@ -966,10 +1113,12 @@
   sBox.addEventListener('click', (e) => {
     const b = e.target.closest('button[data-sym]'); if (!b) return;
     const sym = b.dataset.sym;
-    if (!watchlist.includes(sym)) { watchlist.push(sym); saveWl(); }
+    // Search adds to whichever list is showing, so you can build one by searching.
+    const cur = listTickers(activeList);
+    if (!cur.includes(sym)) setListTickers(activeList, cur.concat(sym));
     selected = sym;
     sInput.value = ''; sBox.classList.remove('open');
-    renderWatchlist(); loadSelected(); resetForecast(); refreshWatchlistQuotes(); loadNews(); loadDividends(); loadValuation();
+    renderListBar(); renderWatchlist(); loadSelected(); resetForecast(); refreshWatchlistQuotes(); loadNews(); loadDividends(); loadValuation();
   });
   document.addEventListener('click', (e) => { if (!e.target.closest('.searchbox')) sBox.classList.remove('open'); });
 
@@ -1369,10 +1518,10 @@
   }
 
   window.addEventListener('resize', () => { if (chartData) renderChart(chartData); });
-  setInterval(() => { loadSelected(); refreshWatchlistQuotes(); }, 60000);
+  setInterval(() => { loadSelected(); repriceWatchlist(); }, 60000);
   setInterval(loadNews, 300000);  // news refreshes every 5 minutes
 
-  renderRanges(); renderWatchlist(); paintOpts();
+  renderRanges(); renderListBar(); renderWatchlist(); paintOpts();
   loadSelected(); refreshWatchlistQuotes(); loadNews(); loadDividends(); loadValuation(); renderTrack();
 })();
 </script>
