@@ -347,6 +347,13 @@
         </div>
         <div id="valuation"></div>
       </div>
+      <div class="card" id="fundCard" style="margin-top:16px; display:none">
+        <div class="tr-head">
+          <h3>Fundamentals</h3>
+          <span class="sub" id="fundSub"></span>
+        </div>
+        <div id="fundamentals"></div>
+      </div>
       <div class="card" style="margin-top:16px">
         <h3 style="font-size:13px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">News</h3>
         <div id="news"><div class="skel">Loading news…</div></div>
@@ -421,6 +428,8 @@
   const divCache = {};    // symbol -> {dividends, context}
   let valCtx = null;      // sigma-rule valuation summary for the selected symbol
   const valCache = {};    // symbol -> valuation summary
+  let fundCtx = null;     // {f: fundamentals, g: dividendGrowth} for the selected symbol
+  const fundCache = {};   // symbol -> same, or null when unavailable
   const FC_RANGES = ['1mo', '6mo'];  // ranges the forecast overlay + cone draw on
   const wlCache = {};      // symbol -> 1mo payload (watchlist rows + sparklines)
   const RANGES = [['1d','1D'],['5d','5D'],['1mo','1M'],['6mo','6M'],['1y','1Y'],['5y','5Y']];
@@ -512,7 +521,7 @@
     const t = listTickers(id);
     if (t.length && !t.includes(selected)) {
       selected = t[0];
-      loadSelected(); resetForecast(); loadNews(); loadDividends(); loadValuation();
+      loadSelected(); resetForecast(); loadNews(); loadDividends(); loadValuation(); loadFundamentals();
     }
     renderListBar(); renderWatchlist(); refreshWatchlistQuotes();
   }
@@ -1074,7 +1083,7 @@
       return;
     }
     const item = e.target.closest('.wl-item'); if (!item) return;
-    selected = item.dataset.s; renderWatchlist(); loadSelected(); resetForecast(); loadNews(); loadDividends(); loadValuation();
+    selected = item.dataset.s; renderWatchlist(); loadSelected(); resetForecast(); loadNews(); loadDividends(); loadValuation(); loadFundamentals();
   });
 
   async function refreshWatchlistQuotes() {
@@ -1118,7 +1127,7 @@
     if (!cur.includes(sym)) setListTickers(activeList, cur.concat(sym));
     selected = sym;
     sInput.value = ''; sBox.classList.remove('open');
-    renderListBar(); renderWatchlist(); loadSelected(); resetForecast(); refreshWatchlistQuotes(); loadNews(); loadDividends(); loadValuation();
+    renderListBar(); renderWatchlist(); loadSelected(); resetForecast(); refreshWatchlistQuotes(); loadNews(); loadDividends(); loadValuation(); loadFundamentals();
   });
   document.addEventListener('click', (e) => { if (!e.target.closest('.searchbox')) sBox.classList.remove('open'); });
 
@@ -1169,6 +1178,120 @@
       divList = divCache[sym].dividends; divCtx = divCache[sym].context;
       if (chartData && chartData.symbol === sym) { renderQuote(chartData); renderChart(chartData); }
     } catch { /* dividends are a bonus — never block the chart */ }
+  }
+
+  // ---------- fundamentals (P/E, cash, growth, statements) ----------
+  async function loadFundamentals() {
+    if (!selected) return;
+    const sym = selected;
+    if (fundCache[sym] !== undefined) { fundCtx = fundCache[sym]; renderFundamentals(); return; }
+    fundCtx = null; renderFundamentals();
+    try {
+      const j = await api(`/api/fundamentals?symbol=${encodeURIComponent(sym)}`);
+      if (sym !== selected) return;
+      fundCache[sym] = j.fundamentals ? { f: j.fundamentals, g: j.dividendGrowth || null } : null;
+      fundCtx = fundCache[sym];
+      renderFundamentals();
+    } catch { /* fundamentals are an enrichment — never block the chart */ }
+  }
+
+  // Compact money formatting: fundamentals span single dollars to trillions.
+  const money = (v, cur) => {
+    if (v == null) return '—';
+    const a = Math.abs(v), s = v < 0 ? '-' : '';
+    const p = cur ? cur + ' ' : '';
+    if (a >= 1e12) return `${s}${p}${(a / 1e12).toFixed(2)}T`;
+    if (a >= 1e9) return `${s}${p}${(a / 1e9).toFixed(2)}B`;
+    if (a >= 1e6) return `${s}${p}${(a / 1e6).toFixed(1)}M`;
+    if (a >= 1e3) return `${s}${p}${(a / 1e3).toFixed(1)}K`;
+    return `${s}${p}${a.toFixed(0)}`;
+  };
+  const pctTxt = (v) => (v == null ? '—' : `${v > 0 ? '+' : ''}${fmt(v, 1)}%`);
+  const plainPct = (v) => (v == null ? '—' : `${fmt(v, 1)}%`);
+
+  function renderFundamentals() {
+    const card = $('fundCard');
+    if (!fundCtx || !fundCtx.f) { card.style.display = 'none'; return; }
+    const f = fundCtx.f, g = fundCtx.g;
+    card.style.display = '';
+
+    if (f.kind === 'fund') {
+      $('fundSub').textContent = 'fund / ETF';
+      $('fundamentals').innerHTML = `<div class="skel">${esc(f.name)} is a fund, so it has no earnings, cash flow or balance sheet of its own —
+        P/E, margins and debt don't apply. Distribution yield ${plainPct(f.dividend.yieldPct)}.</div>`;
+      return;
+    }
+
+    $('fundSub').textContent = `as reported${f.asOfYear ? ` · FY${f.asOfYear}` : ''}${f.currency ? ` · ${f.currency}` : ''}`;
+    const v = f.valuation, c = f.cash, gr = f.growth, d = f.dividend;
+
+    const tile = (k, val, hint) =>
+      `<div class="tile"${hint ? ` title="${esc(hint)}"` : ''}><div class="k">${k}</div><div class="v">${val}</div></div>`;
+
+    const valuationTiles = [
+      tile('Trailing P/E', v.trailingPE ?? '—'),
+      tile('Forward P/E', v.forwardPE ?? '—', 'Based on analyst earnings estimates for the year ahead'),
+      tile('PEG', v.pegRatio ?? '—', 'P/E divided by expected growth — under 1 is often read as cheap for the growth'),
+      tile('P/B', v.priceToBook ?? '—'),
+      tile('EV/EBITDA', v.enterpriseToEbitda ?? '—'),
+      tile('Earnings yield', plainPct(v.earningsYieldPct), 'The inverse of P/E — comparable with the dividend yield'),
+    ].join('');
+
+    const cashTiles = [
+      tile('Free cash flow', money(c.freeCashFlow, f.currency)),
+      tile('FCF margin', plainPct(c.fcfMarginPct), 'Free cash flow as a share of revenue'),
+      tile('Net cash', money(c.netCash, f.currency), 'Cash minus total debt — negative means net debt'),
+      tile('Debt ÷ FCF', c.debtToFcfYears == null ? '—' : `${fmt(c.debtToFcfYears, 1)} yr`, 'Years of free cash flow needed to clear the debt'),
+      tile('Current ratio', c.currentRatio ?? '—'),
+      tile('Debt / equity', c.debtToEquity ?? '—'),
+    ].join('');
+
+    const growthTiles = [
+      tile('Revenue growth', pctTxt(gr.revenueGrowthPct), 'Most recent year-on-year'),
+      tile('Revenue 3y CAGR', pctTxt(gr.revenueCagr3yPct)),
+      tile('Earnings growth', pctTxt(gr.earningsGrowthPct)),
+      tile('Next-yr revenue', pctTxt(gr.nextYearRevenueGrowthPct), 'Analyst consensus estimate'),
+      tile('Operating margin', plainPct(gr.operatingMarginPct)),
+      tile('ROE', plainPct(gr.returnOnEquityPct)),
+    ].join('');
+
+    const divTiles = [
+      tile('Dividend yield', plainPct(d.yieldPct)),
+      tile('5y avg yield', plainPct(d.fiveYearAvgYieldPct), 'Where the current yield sits versus its own history'),
+      tile('Payout ratio', plainPct(d.payoutRatioPct), 'Share of earnings paid out — above 100% is not covered by earnings'),
+      g ? tile('Dividend growth', pctTxt(g.lastYearGrowthPct), 'Last full calendar year versus the one before') : '',
+      g ? tile('Dividend 5y CAGR', pctTxt(g.cagr5yPct)) : '',
+      g ? tile('Increase streak', `${g.increaseStreak} yr${g.increaseStreak === 1 ? '' : 's'}`, g.cut ? 'The payout was reduced at some point in this window' : 'Consecutive years of a higher total payout') : '',
+    ].join('');
+
+    const inc = f.statements.income.slice(0, 4);
+    const cfs = f.statements.cashflow.slice(0, 4);
+    const stmt = inc.length ? `
+      <h4 style="font-size:12px;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-muted);margin:14px 0 2px">Reported statements</h4>
+      <table class="tr-table">
+        <thead><tr><th>Year</th><th>Revenue</th><th>Net income</th><th>Net margin</th><th>Operating CF</th><th>Free CF</th></tr></thead>
+        <tbody>${inc.map((s) => {
+          const m = cfs.find((x) => x.year === s.year) || {};
+          const nm = s.revenue && s.netIncome != null ? (s.netIncome / s.revenue) * 100 : null;
+          return `<tr><td>${s.year}</td><td>${money(s.revenue, '')}</td><td>${money(s.netIncome, '')}</td>
+            <td>${plainPct(nm == null ? null : +nm.toFixed(1))}</td>
+            <td>${money(m.operatingCashFlow, '')}</td><td>${money(m.freeCashFlow, '')}</td></tr>`;
+        }).join('')}</tbody>
+      </table>` : '';
+
+    const section = (title, tiles) =>
+      `<h4 style="font-size:12px;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-muted);margin:14px 0 6px">${title}</h4>
+       <div class="tiles" style="margin-top:0">${tiles}</div>`;
+
+    $('fundamentals').innerHTML =
+      section('Valuation multiples', valuationTiles) +
+      section('Cash &amp; balance sheet', cashTiles) +
+      section('Growth &amp; profitability', growthTiles) +
+      (d.yieldPct != null || g ? section('Dividend', divTiles) : '') +
+      stmt +
+      `<div class="fc-note">Figures are as reported by the company and can be up to a quarter stale; ratios are computed from them.
+       Fundamentals describe the business, not the next two weeks — they are most useful for sizing the risk around a forecast
+       and for spotting when price action and the underlying numbers disagree.</div>`;
   }
 
   // ---------- valuation (sigma rule) ----------
@@ -1328,6 +1451,12 @@
     html += `<div>${esc(f.summary || '')}</div>`;
     if (f.news_impact) html += `<h4>News impact</h4><div>${esc(f.news_impact)}</div>`;
     if (f.dividend_note) html += `<h4>Dividend effect</h4><div>${esc(f.dividend_note)}</div>`;
+    if (f.fundamental_note || (f.fundamental_quality && f.fundamental_quality !== 'n/a')) {
+      html += `<h4>Fundamentals</h4>`;
+      if (f.fundamental_quality && f.fundamental_quality !== 'n/a')
+        html += `<div class="fc-badges" style="margin:0 0 6px"><span class="badge conf">${esc(f.fundamental_quality)}</span></div>`;
+      if (f.fundamental_note) html += `<div>${esc(f.fundamental_note)}</div>`;
+    }
     if (f.valuation || f.valuation_note) {
       html += `<h4>Statistical position</h4>`;
       if (f.valuation) html += `<div class="fc-badges" style="margin:0 0 6px"><span class="badge conf">${esc(f.valuation)}</span>` +
@@ -1522,7 +1651,7 @@
   setInterval(loadNews, 300000);  // news refreshes every 5 minutes
 
   renderRanges(); renderListBar(); renderWatchlist(); paintOpts();
-  loadSelected(); refreshWatchlistQuotes(); loadNews(); loadDividends(); loadValuation(); renderTrack();
+  loadSelected(); refreshWatchlistQuotes(); loadNews(); loadDividends(); loadValuation(); loadFundamentals(); renderTrack();
 })();
 </script>
 </body>

@@ -1,7 +1,8 @@
 // POST /api/forecast  { symbol }  -> AI outlook from NVIDIA Nemotron
 // Requires env var NVIDIA_API_KEY (set it in Vercel project settings).
 import { getChart, getNews, getDividendData, dividendContext, sendJson } from './_yahoo.js';
-import { valuationSummary, dailySigma, projectedRange } from './_analysis.js';
+import { valuationSummary, dailySigma, projectedRange, dividendGrowth } from './_analysis.js';
+import { getFundamentals, fundamentalsBlock } from './_fundamentals.js';
 
 const NVIDIA_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const MODEL = process.env.NVIDIA_MODEL || 'nvidia/nemotron-3-super-120b-a12b';
@@ -112,14 +113,17 @@ export default async function handler(req, res) {
 
     // A full year of DAILY bars: needed for the 200-day sigma window and a
     // meaningful trend fit. The prompt still only quotes the last 30 closes.
-    const [data, news, divData] = await Promise.all([
+    const [data, news, divData, fund] = await Promise.all([
       getChart(symbol, '1y', '1d'),
       getNews(symbol).catch(() => []),                                   // best-effort
       getDividendData(symbol).catch(() => ({ dividends: [], weekly: [] })),
+      getFundamentals(symbol).catch(() => null),                         // needs Yahoo auth; optional
     ]);
     const stats = buildStats(data);
     const div = dividendContext(divData.dividends, stats.last);
     const val = valuationSummary(data.points, divData.weekly, divData.dividends);
+    const divGrowth = dividendGrowth(divData.dividends);
+    const fundBlock = fundamentalsBlock(fund, divGrowth);
     const recent = data.points.slice(-30).map((p) => `${new Date(p.t).toISOString().slice(0, 10)}: ${p.c}`).join('\n');
     const valBlock = val ? `
 Statistical position (sigma rule — how far price sits from its own mean, in standard deviations):
@@ -200,7 +204,7 @@ Daily volatility: ${stats.dailyVolPct}%
 
 Last 30 daily closes:
 ${recent}
-${valBlock}${projBlock}${divBlock}${newsBlock}
+${valBlock}${projBlock}${fundBlock}${divBlock}${newsBlock}
 Weigh the price action, the statistical position, the dividend calendar AND the news headlines. If a headline is significant (earnings, guidance, regulation, M&A), let it influence the outlook and predictions.
 
 Respond with ONLY a JSON object, no other text:
@@ -216,6 +220,8 @@ Respond with ONLY a JSON object, no other text:
   "dividend_note": "1-2 sentences: whether an ex-dividend date falls in the forecast window and how you adjusted the predicted prices for it, or how a recent ex-date distorted the price history (null if no dividend data was provided)",
   "valuation": "stretched low" | "below trend" | "near trend" | "above trend" | "stretched high",
   "valuation_note": "1-2 sentences citing the actual sigma numbers: where the price sits statistically, whether you expect mean reversion inside the forecast window, and why (or why not, if the trend argues against it). Null if no statistical position was provided.",
+  "fundamental_quality": "strong" | "solid" | "mixed" | "weak" | "n/a",
+  "fundamental_note": "2-3 sentences on what the company's own numbers say — cite the actual figures (P/E, free cash flow, revenue or earnings growth, debt, dividend growth). State whether they support or contradict the price action, and whether they made you widen or tighten your predicted bands. Use \"n/a\" quality and a one-line note for ETFs or when no fundamentals were supplied.",
   "predictions": [
     {"d": 1, "price": <predicted close after 1 trading day>, "low": <plausible low>, "high": <plausible high>},
     {"d": 2, "price": ..., "low": ..., "high": ...},
@@ -325,6 +331,8 @@ The predicted low/high band should widen with the horizon, consistent with the s
       dividends: div,
       valuation: val,
       projected,
+      fundamentals: fund,
+      dividendGrowth: divGrowth,
       provider,
       model: usedModel,
       forecast: parsed,

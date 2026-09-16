@@ -81,6 +81,50 @@ const mockDividends = (symbol) => {
     },
   };
 };
+const mockFundamentals = (symbol) => {
+  if (/^(SLV|GLD|CIBR|XBI|SMH|SLVP)$/.test(symbol)) {
+    return { symbol, fundamentals: { symbol, name: symbol + ' ETF', kind: 'fund', currency: 'USD',
+      dividend: { yieldPct: 1.1 }, valuation: {}, cash: {}, growth: {}, statements: { income: [], balance: [], cashflow: [] } },
+      dividendGrowth: null };
+  }
+  const B = 1e9;
+  return {
+    symbol,
+    fundamentals: {
+      symbol, name: symbol + ' Inc.', kind: 'company', currency: 'USD',
+      marketCap: 212 * B, asOfYear: 2025,
+      valuation: { trailingPE: 54.2, forwardPE: 41.8, pegRatio: 1.7, priceToBook: 19.4,
+        priceToSales: 18.1, enterpriseToEbitda: 46.3, earningsYieldPct: 1.85 },
+      cash: { totalCash: 4.3 * B, totalDebt: 0.74 * B, netCash: 3.56 * B,
+        operatingCashFlow: 1.42 * B, freeCashFlow: 1.18 * B, fcfMarginPct: 29.4,
+        debtToFcfYears: 0.63, currentRatio: 1.75, quickRatio: 1.62, debtToEquity: 21.4 },
+      growth: { revenueGrowthPct: 23.6, earningsGrowthPct: 31.2, revenueCagr3yPct: 28.4,
+        netIncomeCagr3yPct: 44.1, nextYearRevenueGrowthPct: 20.8, nextYearEarningsGrowthPct: 24.5,
+        grossMarginPct: 75.1, operatingMarginPct: 17.9, netMarginPct: 12.4, returnOnEquityPct: 28.7 },
+      dividend: { yieldPct: 1.9, rate: 0.84, payoutRatioPct: 41.2, fiveYearAvgYieldPct: 2.4 },
+      statements: {
+        income: [
+          { year: 2025, revenue: 4.01 * B, grossProfit: 3.01 * B, operatingIncome: 0.72 * B, netIncome: 0.50 * B },
+          { year: 2024, revenue: 3.24 * B, grossProfit: 2.40 * B, operatingIncome: 0.51 * B, netIncome: 0.33 * B },
+          { year: 2023, revenue: 2.61 * B, grossProfit: 1.90 * B, operatingIncome: 0.30 * B, netIncome: 0.17 * B },
+          { year: 2022, revenue: 1.90 * B, grossProfit: 1.35 * B, operatingIncome: 0.11 * B, netIncome: 0.05 * B },
+        ],
+        balance: [{ year: 2025, cash: 4.3 * B, totalAssets: 9.1 * B, totalLiabilities: 6.0 * B, equity: 3.1 * B, longTermDebt: 0.6 * B }],
+        cashflow: [
+          { year: 2025, operatingCashFlow: 1.42 * B, capex: -0.24 * B, freeCashFlow: 1.18 * B, dividendsPaid: -0.2 * B },
+          { year: 2024, operatingCashFlow: 1.10 * B, capex: -0.20 * B, freeCashFlow: 0.90 * B, dividendsPaid: -0.18 * B },
+          { year: 2023, operatingCashFlow: 0.82 * B, capex: -0.17 * B, freeCashFlow: 0.65 * B, dividendsPaid: -0.15 * B },
+          { year: 2022, operatingCashFlow: 0.55 * B, capex: -0.14 * B, freeCashFlow: 0.41 * B, dividendsPaid: -0.12 * B },
+        ],
+      },
+    },
+    dividendGrowth: {
+      years: [{ year: 2021, total: 0.62 }, { year: 2022, total: 0.68 }, { year: 2023, total: 0.74 },
+              { year: 2024, total: 0.79 }, { year: 2025, total: 0.84 }],
+      lastYearGrowthPct: 6.3, cagr3yPct: 7.3, cagr5yPct: null, increaseStreak: 4, cut: false,
+    },
+  };
+};
 const mockValuation = (symbol) => ({
   symbol, name: symbol, currency: /\.SI$/.test(symbol) ? 'SGD' : 'USD',
   valuation: {
@@ -124,6 +168,8 @@ const mockForecast = (symbol) => {
       risks: ['A close below the 20-day SMA would weaken the setup', 'Broad market pullback'],
       news_impact: 'Recent earnings-beat coverage and raised analyst targets support the bullish tilt; no negative catalysts in the latest headlines.',
       dividend_note: 'The stock went ex-dividend 4 sessions ago, so roughly 0.42 of the recent decline is mechanical rather than a change in sentiment. No further ex-date falls inside this forecast window.',
+      fundamental_quality: 'solid',
+      fundamental_note: 'Revenue is compounding at 28% over three years with a 29% free-cash-flow margin and net cash on the balance sheet, so the business is funding its own growth. At 54x trailing earnings the price already assumes that continues — the fundamentals justify a tight band but not a cheap multiple.',
       valuation: 'below trend',
       valuation_note: 'At -2.1σ against its 20-day mean the price is statistically stretched low, but only -1.3σ against the rising 1-year trend, so this looks like a pullback within an uptrend rather than a cheap price. A partial drift back toward the 20-day mean is plausible inside the window.',
       predictions: preds,
@@ -147,6 +193,7 @@ const server = http.createServer(async (req, res) => {
         if (url.pathname === '/api/news') return res.end(JSON.stringify(mockNews(url.searchParams.get('symbol') || 'NVDA')));
         if (url.pathname === '/api/dividends') return res.end(JSON.stringify(mockDividends(url.searchParams.get('symbol') || 'NVDA')));
         if (url.pathname === '/api/valuation') return res.end(JSON.stringify(mockValuation(url.searchParams.get('symbol') || 'NVDA')));
+        if (url.pathname === '/api/fundamentals') return res.end(JSON.stringify(mockFundamentals(url.searchParams.get('symbol') || 'NVDA')));
         if (url.pathname === '/api/forecast') {
           const chunks = []; for await (const c of req) chunks.push(c);
           let symbol = 'NVDA';

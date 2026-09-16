@@ -159,3 +159,49 @@ export function valuationSummary(points, weekly, dividends) {
     verdict: verdictFor(composite),
   };
 }
+
+// Dividend growth from the ex-dividend history we already fetch.
+// Grouped by calendar year of the ex-date, which is a good proxy but can be
+// distorted when a company shifts its payment timing across a year boundary —
+// hence the `cut` flag rather than a bare "growth is negative" reading.
+export function dividendGrowth(dividends, now = Date.now()) {
+  if (!Array.isArray(dividends) || dividends.length < 2) return null;
+  const byYear = new Map();
+  for (const d of dividends) {
+    if (!d || !d.exDate || !(d.amount > 0)) continue;
+    const y = new Date(d.exDate).getUTCFullYear();
+    byYear.set(y, (byYear.get(y) || 0) + d.amount);
+  }
+  const currentYear = new Date(now).getUTCFullYear();
+  // The running year is incomplete, so it would fake a cut — leave it out.
+  const series = [...byYear.entries()]
+    .filter(([y]) => y < currentYear)
+    .sort((a, b) => a[0] - b[0])
+    .map(([year, total]) => ({ year, total: round(total, 4) }));
+  if (series.length < 2) return null;
+
+  const cagrOver = (n) => {
+    if (series.length < n + 1) return null;
+    const end = series[series.length - 1].total;
+    const start = series[series.length - 1 - n].total;
+    return start > 0 && end > 0 ? round((Math.pow(end / start, 1 / n) - 1) * 100) : null;
+  };
+  const last = series[series.length - 1].total;
+  const prev = series[series.length - 2].total;
+
+  let increaseStreak = 0;
+  for (let i = series.length - 1; i > 0; i--) {
+    if (series[i].total > series[i - 1].total) increaseStreak++;
+    else break;
+  }
+  const cut = series.some((s, i) => i > 0 && s.total < series[i - 1].total * 0.999);
+
+  return {
+    years: series,
+    lastYearGrowthPct: prev > 0 ? round(((last - prev) / prev) * 100) : null,
+    cagr3yPct: cagrOver(3),
+    cagr5yPct: cagrOver(5),
+    increaseStreak,
+    cut,
+  };
+}

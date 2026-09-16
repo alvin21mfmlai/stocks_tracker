@@ -16,6 +16,11 @@ A live stock viewer with AI forecasting, powered by Yahoo Finance data and NVIDI
   dividend yield versus its own 5-year range — plus optional ±1σ/±2σ bands on
   the chart. All of it is fed to the model, which reports back where the price
   sits statistically and whether it expects mean reversion
+- **Fundamentals**: P/E and other multiples, free cash flow and balance-sheet
+  strength, revenue/earnings growth, dividend growth and the last four years of
+  reported statements — shown in their own card and fed to the model, which
+  reports back a quality read and says where the numbers agree or disagree with
+  the price action
 - **Dividend awareness**: past ex-dividend dates are marked on the chart (`D`),
   the projected next one is marked inside the forecast window (`D?`), and the
   full dividend cycle is fed to the model — on an ex-date the price drops
@@ -53,6 +58,8 @@ api/search.js     GET  /api/search?q=dbs                 → ticker search
 api/news.js       GET  /api/news?symbol=NVDA             → latest headlines
 api/dividends.js  GET  /api/dividends?symbol=O39.SI      → ex-dates + cycle facts
 api/valuation.js  GET  /api/valuation?symbol=D05.SI      → sigma-rule stretch analysis
+api/fundamentals.js GET /api/fundamentals?symbol=PANW    → P/E, cash, growth, statements
+api/_fundamentals.js  quoteSummary normalizer (not an endpoint)
 api/_analysis.js  z-scores, trend fit, percentiles (not an endpoint)
 api/forecast.js   POST /api/forecast {symbol}            → Nemotron AI outlook
 api/_yahoo.js     shared Yahoo Finance helpers (not exposed as an endpoint)

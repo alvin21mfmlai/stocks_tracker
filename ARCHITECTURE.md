@@ -29,7 +29,9 @@ The browser never talks to Yahoo or NVIDIA directly — always through your own
 | `api/news.js` | `GET /api/news?symbol=` → latest headlines |
 | `api/dividends.js` | `GET /api/dividends?symbol=&price=` → ex-dividend history + derived cycle facts |
 | `api/valuation.js` | `GET /api/valuation?symbol=` → sigma-rule stretch analysis |
-| `api/_analysis.js` | Pure statistics: z-scores, log-linear trend fit, percentiles, dividend-yield history. `_` prefix = helper, not an endpoint |
+| `api/_analysis.js` | Pure statistics: z-scores, log-linear trend fit, percentiles, dividend-yield history, dividend growth. `_` prefix = helper, not an endpoint |
+| `api/_fundamentals.js` | quoteSummary → normalized fundamentals (multiples, cash, growth, statements) + the prompt block builder |
+| `api/fundamentals.js` | `GET /api/fundamentals?symbol=` → fundamentals + dividend growth |
 | `api/forecast.js` | `POST /api/forecast {symbol}` → stats + Nemotron AI forecast |
 | `dev-server.js` | Local-only dev server; `MOCK=1` serves synthetic data. Never runs on Vercel |
 | `package.json` | Just sets `"type": "module"` (ESM). No dependencies |
@@ -46,6 +48,15 @@ convention. All of them delegate the real work to `_yahoo.js` and reply through
 
 - `yahooJson(path)` — tries `query1.finance.yahoo.com` then `query2` as fallback.
   The browser `User-Agent` header is required or Yahoo rejects the request.
+- `yahooAuthedJson(path)` — the **authenticated** path, needed for anything with
+  company financials. Yahoo's `quoteSummary` requires a session cookie plus a
+  matching `crumb` token, so the helper does a handshake: fetch a
+  finance.yahoo.com page to collect cookies → exchange them at
+  `/v1/test/getcrumb` → send cookie + crumb on every call. Both are cached in
+  module scope for 30 minutes (a warm Vercel instance pays the two extra round
+  trips once) and a 401/403/422 triggers exactly one fresh handshake and retry.
+  The crumb is sanity-checked, because a consent/redirect page returns HTML
+  rather than a short token.
 - `getChart(symbol, range)` — maps range → interval via the `INTERVALS` table
   (`1d`→5m bars, `1mo`→daily, `1y`→weekly …), normalizes the response into
   `{symbol, name, currency, price, prevClose, …, points: [{t,o,h,l,c,v}]}`.
@@ -65,8 +76,10 @@ convention. All of them delegate the real work to `_yahoo.js` and reply through
 
 `forecast.js` is the most involved:
 
-1. Fetches **one year of daily bars**, news, and dividend data in parallel (news
-   and dividend failures are ignored — the forecast still runs without them).
+1. Fetches **one year of daily bars**, news, dividend data and **fundamentals**
+   in parallel (news, dividend and fundamentals failures are ignored — the
+   forecast still runs without them, which matters because fundamentals depend
+   on the crumb handshake and on Yahoo actually covering that listing).
    A year of dailies is what the 200-day sigma window and the trend fit need;
    the prompt still only quotes the last 30 closes.
 2. `buildStats()` computes SMA20/50, 1w/1m/3m changes, daily log-return
@@ -214,5 +227,13 @@ state" throughout — no virtual DOM, no partial updates.
   the old key lingers).
 - `dev-server.js` mock mode intercepts `/api/*` before the real modules, so
   mock shapes must mirror the real API responses when you add fields.
-- Yahoo's endpoints are unofficial: no auth, but keep the User-Agent header and
-  the query1/query2 fallback, and be gentle with request rates.
+- Yahoo's price endpoints are unofficial but open; `quoteSummary` is not — it
+  needs the cookie+crumb handshake in `yahooAuthedJson`. If fundamentals go
+  blank everywhere at once, that handshake is the first thing to check
+  (`/api/fundamentals?symbol=AAPL` returns an `error` string rather than
+  failing, precisely so this is diagnosable from the browser).
+- Fundamentals are **as reported** and can be a quarter stale. ETFs and funds
+  legitimately have none — `kind: 'fund'` drives a separate UI branch and a
+  separate prompt block, rather than showing a wall of n/a.
+- Keep the User-Agent header and the query1/query2 fallback, and be gentle with
+  request rates.

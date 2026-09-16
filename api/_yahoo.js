@@ -14,6 +14,89 @@ async function yahooJson(path) {
   throw lastErr || new Error('Yahoo fetch failed');
 }
 
+// ---------------------------------------------------------------------------
+// Authenticated Yahoo access (needed for fundamentals)
+//
+// The chart/RSS endpoints above are open, but anything with company financials
+// — quoteSummary — requires a session cookie plus a matching "crumb" token.
+// The handshake is: hit a finance.yahoo.com page to collect cookies, exchange
+// them for a crumb, then send both on every quoteSummary call. Both are cached
+// in module scope so a warm serverless instance pays the two extra round trips
+// only once (Vercel reuses the process across invocations).
+// ---------------------------------------------------------------------------
+let authState = null;          // { cookie, crumb, at }
+let authPromise = null;        // dedupes concurrent cold-start handshakes
+const AUTH_TTL_MS = 30 * 60 * 1000;
+
+function collectCookies(res) {
+  // Node 18+ exposes getSetCookie(); fall back to the folded header.
+  const raw = typeof res.headers.getSetCookie === 'function'
+    ? res.headers.getSetCookie()
+    : (res.headers.get('set-cookie') ? [res.headers.get('set-cookie')] : []);
+  return raw.map((c) => String(c).split(';')[0]).filter(Boolean);
+}
+
+async function handshake() {
+  const jar = [];
+  // 1. Any finance page will set the A1/A3 session cookies.
+  try {
+    const seed = await fetch('https://finance.yahoo.com/quote/AAPL', {
+      headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml,application/xml' },
+      redirect: 'manual',
+    });
+    jar.push(...collectCookies(seed));
+  } catch {}
+  if (!jar.length) {
+    // fc.yahoo.com returns an error page but still sets a usable cookie.
+    try {
+      const alt = await fetch('https://fc.yahoo.com/', { headers: { 'User-Agent': UA }, redirect: 'manual' });
+      jar.push(...collectCookies(alt));
+    } catch {}
+  }
+  const cookie = jar.join('; ');
+  if (!cookie) throw new Error('Yahoo set no cookies');
+
+  // 2. Trade the cookies for a crumb (plain text body).
+  const cr = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', {
+    headers: {
+      'User-Agent': UA, cookie,
+      Accept: '*/*', origin: 'https://finance.yahoo.com', referer: 'https://finance.yahoo.com/',
+    },
+  });
+  if (!cr.ok) throw new Error(`crumb HTTP ${cr.status}`);
+  const crumb = (await cr.text()).trim();
+  // A consent/redirect page would come back as HTML rather than a short token.
+  if (!crumb || crumb.length > 32 || /[<>\s]/.test(crumb)) throw new Error('crumb looks invalid');
+  return { cookie, crumb, at: Date.now() };
+}
+
+async function getAuth() {
+  if (authState && Date.now() - authState.at < AUTH_TTL_MS) return authState;
+  if (!authPromise) {
+    authPromise = handshake()
+      .then((s) => { authState = s; return s; })
+      .finally(() => { authPromise = null; });
+  }
+  return authPromise;
+}
+
+// GET an authenticated Yahoo JSON path. `path` must not already carry a crumb.
+// Retries once with a fresh handshake if the crumb has gone stale (401/403/422).
+export async function yahooAuthedJson(path) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { cookie, crumb } = await getAuth();
+    const sep = path.includes('?') ? '&' : '?';
+    const url = `${HOSTS[0]}${path}${sep}crumb=${encodeURIComponent(crumb)}`;
+    const r = await fetch(url, {
+      headers: { 'User-Agent': UA, cookie, Accept: 'application/json', referer: 'https://finance.yahoo.com/' },
+    });
+    if (r.ok) return r.json();
+    if ([401, 403, 422].includes(r.status) && attempt === 0) { authState = null; continue; }
+    throw new Error(`Yahoo authed HTTP ${r.status}`);
+  }
+  throw new Error('Yahoo authed fetch failed');
+}
+
 // range -> sensible interval
 const INTERVALS = { '1d': '5m', '5d': '30m', '1mo': '1d', '3mo': '1d', '6mo': '1d', '1y': '1wk', '2y': '1wk', '5y': '1mo' };
 
