@@ -46,6 +46,18 @@ A live stock viewer with AI forecasting, powered by Yahoo Finance data and NVIDI
 - Latest news headlines for the selected stock (via Yahoo Finance), shown below
   the chart and fed into the AI forecast — the model weighs headlines alongside
   price action and reports their impact in a "News impact" section
+- **Top picks by category**: a sidebar card ranks the stocks inside a category
+  (Big Tech, Semiconductors, Cybersecurity, US banks, Singapore banks, Singapore
+  blue chips, Minerals & mining, Precious metals, Healthcare & biomedical,
+  Energy) on quality, growth, value, momentum and income, with sector-tuned
+  weights. Each row shows its strengths, a watch-out and an expandable score
+  breakdown; "Save as list" turns the ranking into a sidebar list. Rules-based
+  on reported numbers — no model involved, so every rank is traceable
+- **Stock assistant** ("✦ Ask AI", bottom-right): a chat agent that answers any
+  question about stocks by calling the site's own data tools — live quotes,
+  fundamentals, sigma stretch, news, ticker search and the category screens —
+  before it writes. Replies show which lookups it used; tickers in replies are
+  clickable and open the chart. It knows which list and stock you're viewing
 - Your NVIDIA API key stays server-side in a serverless function — it is never
   exposed to the browser
 
@@ -62,6 +74,11 @@ api/fundamentals.js GET /api/fundamentals?symbol=PANW    → P/E, cash, growth, 
 api/_fundamentals.js  quoteSummary normalizer (not an endpoint)
 api/_analysis.js  z-scores, trend fit, percentiles (not an endpoint)
 api/forecast.js   POST /api/forecast {symbol}            → Nemotron AI outlook
+api/screener.js   GET  /api/screener[?category=semis]    → categories, or ranked top picks
+api/agent.js      POST /api/agent {messages, provider}   → assistant reply + lookups used
+api/_universes.js the category ticker lists (not an endpoint)
+api/_screener.js  factor scoring + shared caches (not an endpoint)
+api/_agent.js     assistant tools + tool-calling loop (not an endpoint)
 api/_yahoo.js     shared Yahoo Finance helpers (not exposed as an endpoint)
 dev-server.js     local dev server (optional)
 ```
@@ -110,5 +127,15 @@ Offline / UI-only mode with synthetic data: `MOCK=1 node dev-server.js`
   overrides the default (`gpt-5-mini`); `OPENAI_REASONING` sets reasoning effort
   (default `low`). Note: OpenAI calls are billed to your account — every visitor
   who clicks "Generate forecast" with OpenAI selected spends your credit.
+- **Assistant provider**: the assistant defaults to OpenAI when `OPENAI_API_KEY`
+  is set, because it relies on tool calling and OpenAI's is the most reliable;
+  NVIDIA works too (toggle under the chat box) and the server repairs Nemotron's
+  occasional malformed tool calls. `OPENAI_AGENT_MODEL` / `NVIDIA_AGENT_MODEL`
+  pick a different model for the assistant only (fall back to `OPENAI_MODEL` /
+  `NVIDIA_MODEL`). A question typically costs 2–3 model calls.
+- **Top picks** are a screen of reported numbers ranked within each group — the
+  best of a weak group is still in a weak group, and the screen doesn't know
+  your goals, horizon or tax position. Edit `api/_universes.js` to change the
+  categories or their tickers.
 - Forecasts are AI-generated commentary on price action only (no news/fundamentals
   are fed in) — for information, not investment advice.

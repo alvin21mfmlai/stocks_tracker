@@ -178,6 +178,58 @@ const mockForecast = (symbol) => {
   };
 };
 
+// Top picks: deterministic pseudo-scores per ticker, shaped like /api/screener.
+const mockScreener = async (id) => {
+  const { categoryList, universeById } = await import('./api/_universes.js');
+  const { WEIGHTS, METHODOLOGY } = await import('./api/_screener.js');
+  if (!id) return { categories: categoryList() };
+  const u = universeById(id);
+  if (!u) return { error: `unknown category "${id}"` };
+  const weights = WEIGHTS[u.profile] || WEIGHTS.blend;
+  const seed = (s, k) => { let h = 7; for (const c of s + k) h = (h * 31 + c.charCodeAt(0)) % 9973; return h % 100; };
+  const picks = u.tickers.filter((s) => !(id === 'cyber' && s === 'RBRK')).map((symbol) => {
+    const factors = {};
+    for (const k of ['quality', 'growth', 'value', 'momentum', 'income']) factors[k] = seed(symbol, k);
+    let acc = 0, ws = 0;
+    for (const [k, w] of Object.entries(weights)) if (w) { acc += w * factors[k]; ws += w; }
+    return {
+      symbol, name: symbol.replace('.SI', '') + ' Holdings', currency: symbol.endsWith('.SI') ? 'SGD' : 'USD',
+      price: 20 + seed(symbol, 'p') * 4.3, bank: u.profile === 'bank', score: Math.round(acc / ws), coverage: seed(symbol, 'c') > 85 ? 0.8 : 1,
+      factors,
+      highlights: [`return on equity ${10 + seed(symbol, 'r') / 3 | 0}%`, `revenue growth ${seed(symbol, 'g') / 2 | 0}% y/y`],
+      watch: factors.value < 40 ? `Value: forward P/E ${20 + seed(symbol, 'v') / 2 | 0}x` : null,
+      metrics: { fwdPE: 20 + seed(symbol, 'v') / 2, revGrowth: seed(symbol, 'g') / 2, fcfMargin: seed(symbol, 'f') / 3, roe: 10 + seed(symbol, 'r') / 3, divYield: seed(symbol, 'd') / 25, ret6m: seed(symbol, 'm') - 30, ret12m: seed(symbol, 'n') - 20 },
+    };
+  }).sort((a, b) => b.score - a.score).map((p, i) => ({ rank: i + 1, ...p }));
+  return { category: { id: u.id, name: u.name, blurb: u.blurb, profile: u.profile }, weights, asOf: new Date().toISOString(), picks, failed: id === 'cyber' ? ['RBRK'] : [], methodology: METHODOLOGY };
+};
+
+const mockAgent = () => ({
+  reply: [
+    'Here are the top five from the **Semiconductors** screen, ranked on quality, growth, value and momentum:',
+    '',
+    '| # | Ticker | Score | Why it ranks |',
+    '|---|---|---|---|',
+    '| 1 | `NVDA` | 78 | 62% FCF margin, revenue +94% y/y |',
+    '| 2 | `AVGO` | 71 | strong 12-month momentum, ROE 38% |',
+    '| 3 | `TSM` | 68 | forward P/E 19x, revenue +31% |',
+    '| 4 | `ASML` | 61 | best quality in group |',
+    '| 5 | `AMD` | 55 | growth strong, valuation stretched |',
+    '',
+    '#### What to weigh',
+    '- `NVDA` is priced for continued growth — it is **+2.1σ** above its 1-year trend.',
+    '- `TSM` is the cheapest of the five on forward earnings.',
+    '',
+    '_Screen of reported numbers, not personalised advice._',
+  ].join('\n'),
+  trace: [
+    { tool: 'screen_category', arg: 'semis', ok: true, ms: 2140 },
+    { tool: 'get_valuation_stretch', arg: 'NVDA', ok: true, ms: 610 },
+    { tool: 'get_quote', arg: 'TSM', ok: true, ms: 320 },
+  ],
+  rounds: 2, mode: 'native', elapsedMs: 6400, provider: 'openai', model: 'gpt-5 (mock)',
+});
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   try {
@@ -194,6 +246,11 @@ const server = http.createServer(async (req, res) => {
         if (url.pathname === '/api/dividends') return res.end(JSON.stringify(mockDividends(url.searchParams.get('symbol') || 'NVDA')));
         if (url.pathname === '/api/valuation') return res.end(JSON.stringify(mockValuation(url.searchParams.get('symbol') || 'NVDA')));
         if (url.pathname === '/api/fundamentals') return res.end(JSON.stringify(mockFundamentals(url.searchParams.get('symbol') || 'NVDA')));
+        if (url.pathname === '/api/screener') return res.end(JSON.stringify(await mockScreener(url.searchParams.get('category'))));
+        if (url.pathname === '/api/agent') {
+          for await (const _ of req) { /* drain */ }
+          return setTimeout(() => res.end(JSON.stringify(mockAgent())), 900);
+        }
         if (url.pathname === '/api/forecast') {
           const chunks = []; for await (const c of req) chunks.push(c);
           let symbol = 'NVDA';

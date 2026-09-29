@@ -11,6 +11,7 @@ import { yahooAuthedJson } from './_yahoo.js';
 
 const MODULES = [
   'price',
+  'assetProfile',
   'summaryDetail',
   'defaultKeyStatistics',
   'financialData',
@@ -98,6 +99,15 @@ export async function getFundamentals(symbol) {
     symbol: price.symbol || symbol,
     name: price.longName || price.shortName || symbol,
     kind: isFund ? 'fund' : 'company',
+    // Sector/industry let the screener switch to bank-appropriate metrics
+    // (debt is a bank's raw material, so FCF/debt ratios mislead there), and
+    // give the assistant a one-paragraph description of the business.
+    profile: {
+      sector: (r.assetProfile || {}).sector || null,
+      industry: (r.assetProfile || {}).industry || null,
+      country: (r.assetProfile || {}).country || null,
+      summary: ((r.assetProfile || {}).longBusinessSummary || '').slice(0, 600) || null,
+    },
     currency: price.currency || null,
     marketCap,
     asOfYear: income[0]?.year ?? null,

@@ -12,7 +12,8 @@ Browser (index.html — everything visual)
 Vercel serverless functions (api/*.js — the backend)
    │
    ├── Yahoo Finance  (quotes, history, search, news — free, no key)
-   └── NVIDIA API     (Nemotron forecast — key in env var NVIDIA_API_KEY)
+   ├── NVIDIA API     (Nemotron — key in env var NVIDIA_API_KEY)
+   └── OpenAI API     (optional — key in env var OPENAI_API_KEY)
 ```
 
 The browser never talks to Yahoo or NVIDIA directly — always through your own
@@ -33,6 +34,11 @@ The browser never talks to Yahoo or NVIDIA directly — always through your own
 | `api/_fundamentals.js` | quoteSummary → normalized fundamentals (multiples, cash, growth, statements) + the prompt block builder |
 | `api/fundamentals.js` | `GET /api/fundamentals?symbol=` → fundamentals + dividend growth |
 | `api/forecast.js` | `POST /api/forecast {symbol}` → stats + Nemotron AI forecast |
+| `api/_universes.js` | `UNIVERSES` — the top-picks categories as `{id, name, profile, blurb, tickers}`. `profile` picks the factor weights |
+| `api/_screener.js` | Factor scoring (`FACTORS`, `WEIGHTS`, `scoreGroup`), `screenCategory(id)`, and the shared module caches (`cachedFundamentals` 6 h, `cachedChart` 10 min, screens 1 h) |
+| `api/screener.js` | `GET /api/screener` → category list; `?category=id` → ranked picks |
+| `api/_agent.js` | The assistant: tool definitions (`TOOL_DEFS`) + implementations (`TOOL_IMPLS`), system prompt, the tool-calling loop `runAgent()`, and the parser for tool calls leaked as text |
+| `api/agent.js` | `POST /api/agent` → picks the provider and supplies `callLLM` to `runAgent()` |
 | `dev-server.js` | Local-only dev server; `MOCK=1` serves synthetic data. Never runs on Vercel |
 | `package.json` | Just sets `"type": "module"` (ESM). No dependencies |
 
@@ -97,6 +103,48 @@ convention. All of them delegate the real work to `_yahoo.js` and reply through
    parses the outermost `{…}`. `normalizePredictions()` validates the numbers,
    clamps bands to ±30%, and assigns real weekday dates via `nextTradingDays()`.
 
+### Top picks (`_screener.js`)
+
+For each ticker in a category: fundamentals (`_fundamentals.js`) + 1 year of
+daily closes, fetched 4 at a time. `extractMetrics()` flattens them into the
+metrics listed in `FACTORS`; each metric becomes a **percentile within the group** (direction-aware:
+a low P/E scores high; a negative P/E ranks worst, not best). Factors average
+their metrics; the score is a weighted blend by profile:
+
+| profile | quality | growth | value | momentum | income |
+|---|---|---|---|---|---|
+| growth (tech, semis, cyber) | 30 | 30 | 20 | 20 | 0 |
+| bank | 30 | 15 | 25 | 10 | 20 |
+| resources (mining, gold, energy) | 30 | 10 | 30 | 20 | 10 |
+| defensive (healthcare) | 30 | 25 | 20 | 15 | 10 |
+| blend (SG blue chips) | 30 | 20 | 20 | 15 | 15 |
+
+Banks skip FCF margin, debt/FCF and EV/EBITDA (meaningless for lenders) and
+use P/B. A payout ratio over 100% cuts the income factor by 40%. Missing
+metrics lower `coverage` rather than the score. Funds are skipped.
+
+### Assistant (`_agent.js`)
+
+`runAgent({messages, callLLM, context})` loops up to 5 rounds inside a 52 s
+budget: call the model with `TOOL_DEFS` → run the requested tools in parallel
+(max 6 per round) → feed results back → repeat until the model answers without
+tools. The last round (or when <14 s remain) sends `tool_choice: 'none'` plus a
+"answer now" nudge so a reply always comes back. Three tool-call paths:
+
+1. **native** — `message.tool_calls` (OpenAI; Nemotron most of the time);
+2. **leaked** — Nemotron sometimes writes `<tool_call>{…}</tool_call>` or the
+   XML `<function=…><parameter=…>` form into `content`; `parseTextToolCalls()`
+   recovers both and strips them from the visible text;
+3. **text protocol** — if the endpoint rejects `tools` (400/404/422), the loop
+   retries with the tool list described in the system prompt and results sent
+   back as `<tool_result>` user messages.
+
+Tools return compact JSON (errors as `{error}` so the model can say "no data"
+rather than invent it). `screen_category` shares the screener's caches, so a
+question right after the Top-picks card loads is fast. `callLLM` is injected,
+which is how the loop is unit-tested without a network. The reply includes a
+`trace` of `{tool, arg, ok, ms}` that the UI shows as "Data consulted".
+
 ## Frontend (`index.html`)
 
 One file, three blocks: `<style>`, markup, one `<script>` IIFE.
@@ -133,7 +181,8 @@ list and re-points `selected` if the current symbol isn't in the new one.
 
 **Browser storage keys**: `ls_watchlist`, `ls_seeded`, `ls_provider`,
 `ls_chartopts`, `ls_fclog` (the forecast track record), `ls_list_edits`,
-`ls_custom_lists`, `ls_active_list`.
+`ls_custom_lists`, `ls_active_list`, `ls_tp_cat` (last Top-picks category),
+`ls_chat` (last 30 assistant messages), `ls_ai_provider` (assistant provider).
 
 **JS sections**, in file order, each marked with a `// ---------- name ----------`
 comment:
@@ -185,6 +234,18 @@ comment:
   the panel (badges, summary, news impact, levels, drivers/risks, horizon
   chips, predicted closes). Sets `fc` so the chart overlay appears;
   auto-switches to the 1M range if on an intraday view.
+- `top picks` — `initTopPicks()` loads the category list once, `loadTopPicks()`
+  fetches `/api/screener?category=`, `renderTopPicks()` draws the top 5 (or all)
+  with score bars, strengths/watch-outs and a per-row factor breakdown (only
+  factors the profile weights). Row click → `selectSymbol()`; "Save as list"
+  creates a custom list named "<Category> — top picks"; "Ask AI about these"
+  opens the assistant with a prefilled prompt.
+- `assistant` — `chat` state, `sendChat()` POSTs the history plus page context
+  (active list name + tickers, selected symbol) to `/api/agent`.
+  `mdToHtml()` is a small **escape-first** markdown renderer (tables, lists,
+  headings, code, bold/italic, http links only); backticked tickers become
+  `.tk` buttons that load the chart. Enter sends, Shift+Enter is a newline,
+  Escape closes.
 - `load & refresh` — `loadSelected()` is the main entry point; timers at the
   bottom: quotes/chart every 60s, news every 5 min.
 
@@ -211,6 +272,13 @@ state" throughout — no virtual DOM, no partial updates.
 | Forecast prompt & JSON schema | the `prompt` template in `api/forecast.js` (keep the JSON field names in sync with `renderForecast()`) |
 | Forecast horizon options | `[1, 3, 5, 7]` in `renderForecast()`; days requested is in the prompt |
 | Which ranges show the overlay | `FC_RANGES` |
+| Top-picks categories / tickers | `UNIVERSES` in `api/_universes.js` (keep ids stable — `ls_tp_cat` stores them) |
+| Factor weights per sector type | `WEIGHTS` in `api/_screener.js` |
+| Which metrics make up a factor | `FACTORS` in `api/_screener.js` |
+| Assistant model | env `OPENAI_AGENT_MODEL` / `NVIDIA_AGENT_MODEL` |
+| Assistant tools | `TOOL_DEFS` + `TOOL_IMPLS` in `api/_agent.js` (add both; add a label in `TOOL_LABEL` in `index.html`) |
+| Assistant tone / rules | `systemPrompt()` in `api/_agent.js` |
+| Suggested questions | `SUGGESTIONS` in `index.html` |
 | Headline count fed to the model | `news.slice(0, 8)` in `api/forecast.js` |
 
 ## Gotchas
@@ -235,5 +303,11 @@ state" throughout — no virtual DOM, no partial updates.
 - Fundamentals are **as reported** and can be a quarter stale. ETFs and funds
   legitimately have none — `kind: 'fund'` drives a separate UI branch and a
   separate prompt block, rather than showing a wall of n/a.
+- A cold Top-picks load for a 10-stock category makes ~20 Yahoo calls (4 at a
+  time) and takes several seconds; after that it's cached per warm instance
+  and at the edge for an hour. Don't add much beyond ~12 tickers per category.
+- Every assistant question spends model credit (usually 2–3 calls). The
+  assistant's tool implementations call the same helpers as the endpoints, so
+  a Yahoo outage shows up there as tool errors, visible in "Data consulted".
 - Keep the User-Agent header and the query1/query2 fallback, and be gentle with
   request rates.
