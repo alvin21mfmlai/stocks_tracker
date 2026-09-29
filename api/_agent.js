@@ -237,11 +237,27 @@ ${TOOL_DEFS.map((t) => `- ${t.function.name}(${Object.keys(t.function.parameters
   return p;
 }
 
+
 const FINAL_NUDGE = 'You are out of tool budget. Write the final answer now from the data already gathered — no more tool calls. Note any gaps.';
 
 // ---------------------------------------------------------------------------
-// The loop
+// The loop — run in STEPS
 // ---------------------------------------------------------------------------
+// A question typically needs 2–3 model calls plus tool fetches. On a slow
+// model that adds up to more than one serverless invocation can hold, and the
+// last call (the one that writes the answer) used to get whatever time was
+// left — so it was the one that timed out, throwing away all the research.
+//
+// So the work is split into steps. Each HTTP request runs as much as fits and
+// returns either the answer or a `state` object; the browser posts the state
+// straight back and the next request carries on with a fresh time window.
+// Two rules keep every model call inside one request:
+//   - a model call only STARTS early in a request (before llmStartByMs),
+//     so it always has most of the window to finish;
+//   - tools only start before toolsStartByMs; otherwise they're parked in
+//     `state.pending` and run first thing in the next request.
+// `emit` streams progress events (tool start/end, answer text) as they happen.
+
 async function runTool(impls, name, args, timeoutMs) {
   const impl = impls[name];
   if (!impl) return { error: `unknown tool "${name}"` };
@@ -258,39 +274,126 @@ async function runTool(impls, name, args, timeoutMs) {
   }
 }
 
-const shortArgs = (a) => (a ? (a.symbol || a.category || a.query || '') : '');
+const shortArgs = (a) => (a ? String(a.symbol || a.category || a.query || '') : '');
+const MAX_RESULT_CHARS = 12_000;
+const clip = (o) => {
+  const s = JSON.stringify(o);
+  return s.length > MAX_RESULT_CHARS ? s.slice(0, MAX_RESULT_CHARS) + '…(truncated)' : s;
+};
 
-export async function runAgent({
-  messages, callLLM, tools = TOOL_IMPLS, context = {},
-  budgetMs = 50_000, maxRounds = 5, maxCallsPerRound = 6, today = new Date().toISOString().slice(0, 10),
+// Forwards answer text to the browser as the model writes it — but never
+// tool-call markup or reasoning tags. A trailing "<" is held back until it is
+// clear it isn't the start of one. If the turn turns out to be a tool call,
+// `discard()` tells the browser to drop what it showed.
+const TAG_RE = /<\/?(tool_call|function=|think)/;
+function makeDraft(emit) {
+  let buf = '', sent = 0, live = true;
+  return {
+    push(s) {
+      if (!s) return;
+      buf += s;
+      if (!live) return;
+      if (TAG_RE.test(buf)) { live = false; if (sent) emit({ t: 'reset' }); sent = 0; return; }
+      let end = buf.length;
+      const lt = buf.lastIndexOf('<');
+      if (lt >= sent && /^<\/?[a-z_=]*$/i.test(buf.slice(lt)) && end - lt < 16) end = lt;
+      if (end > sent) { emit({ t: 'delta', text: buf.slice(sent, end) }); sent = end; }
+    },
+    flush() { if (live && buf.length > sent) { emit({ t: 'delta', text: buf.slice(sent) }); sent = buf.length; } },
+    discard() { if (sent) emit({ t: 'reset' }); buf = ''; sent = 0; live = true; },
+  };
+}
+
+async function runPending(st, tools, emit, timeoutMs, maxCalls) {
+  const { native, calls } = st.pending;
+  const toRun = calls.slice(0, maxCalls);
+  const results = await Promise.all(toRun.map(async (c) => {
+    const arg = shortArgs(c.args);
+    emit({ t: 'tool', phase: 'start', tool: c.name, arg });
+    const t0 = Date.now();
+    const out = await runTool(tools, c.name, c.args, timeoutMs);
+    const rec = { tool: c.name, arg, ok: !out?.error, ms: Date.now() - t0 };
+    st.trace.push(rec);
+    emit({ t: 'tool', phase: 'end', ...rec });
+    return out;
+  }));
+  if (native) {
+    calls.forEach((c, i) => st.work.push({
+      role: 'tool', tool_call_id: c.id,
+      content: clip(i < toRun.length ? results[i] : { error: 'skipped: too many tool calls in one turn — ask again if still needed' }),
+    }));
+  } else {
+    st.work.push({
+      role: 'user',
+      content: 'Tool results:\n' + toRun.map((c, i) => `<tool_result name="${c.name}">${clip(results[i])}</tool_result>`).join('\n')
+        + '\nContinue: call more tools only if genuinely needed, otherwise write the final answer.',
+    });
+  }
+}
+
+export async function runAgentStep({
+  messages, callLLM, tools = TOOL_IMPLS, context = {}, state = null, emit = () => {},
+  stepBudgetMs = 52_000,     // this request's window (vercel.json maxDuration is 60)
+  llmStartByMs = 12_000,     // don't start a model call later than this into a request
+  toolsStartByMs = 30_000,   // don't start tools later than this into a request
+  totalBudgetMs = 170_000,   // across all steps: after this, answer with what we have
+  maxRounds = 6, maxCallsPerRound = 6,
+  today = new Date().toISOString().slice(0, 10),
 }) {
-  const started = Date.now();
-  const elapsed = () => Date.now() - started;
-  const trace = [];
-  let textMode = false;
-  let switchedMode = false;
+  const stepStart = Date.now();
+  const inStep = () => Date.now() - stepStart;
+  const st = {
+    work: [], round: 0, textMode: false, switched: false, nudged: false,
+    trace: [], t0: stepStart, pending: null, steps: 0,
+    ...(state || {}),
+  };
+  st.steps += 1;
+  const total = () => Date.now() - st.t0;
+  const pause = () => ({ done: false, state: st });
+  const finish = (reply) => ({
+    done: true,
+    reply: reply || 'I could not put an answer together — try a narrower question.',
+    trace: st.trace, rounds: st.round + 1, steps: st.steps,
+    mode: st.textMode ? 'text' : 'native', elapsedMs: total(),
+  });
 
-  const convo = [{ role: 'system', content: systemPrompt({ today, context, maxRounds }) }, ...messages];
+  for (let guard = 0; guard < 12; guard++) {
+    // 1) Tools the model asked for last round (possibly in an earlier request).
+    if (st.pending) {
+      if (inStep() > toolsStartByMs) return pause();
+      emit({ t: 'status', text: 'Fetching data…' });
+      const toolTimeout = Math.max(4_000, Math.min(25_000, stepBudgetMs - inStep() - 4_000));
+      await runPending(st, tools, emit, toolTimeout, maxCallsPerRound);
+      st.pending = null;
+      st.round++;
+    }
 
-  for (let round = 0; round < maxRounds; round++) {
-    const remaining = budgetMs - elapsed();
-    const finalRound = round === maxRounds - 1 || remaining < 14_000;
-    if (finalRound && round > 0) convo.push({ role: 'user', content: FINAL_NUDGE });
-
+    // 2) A model call, only with most of this request's window still ahead.
+    if (inStep() > llmStartByMs) return pause();
+    const finalRound = st.round >= maxRounds - 1 || total() > totalBudgetMs;
+    if (finalRound && st.round > 0 && !st.nudged) {
+      st.work.push({ role: 'user', content: FINAL_NUDGE });
+      st.nudged = true;
+    }
+    emit({ t: 'status', text: st.round === 0 ? 'Thinking…' : finalRound ? 'Writing the answer…' : 'Reading the data…' });
+    const draft = makeDraft(emit);
     let msg;
     try {
       msg = await callLLM({
-        messages: convo,
-        tools: textMode ? null : TOOL_DEFS,
-        toolChoice: textMode ? null : (finalRound && round > 0 ? 'none' : 'auto'),
-        remainingMs: remaining,
+        messages: [
+          { role: 'system', content: systemPrompt({ today, context, maxRounds, textProtocol: st.textMode }) },
+          ...messages, ...st.work,
+        ],
+        tools: st.textMode ? null : TOOL_DEFS,
+        toolChoice: st.textMode ? null : (finalRound && st.round > 0 ? 'none' : 'auto'),
+        remainingMs: stepBudgetMs - inStep(),
+        onDelta: (s) => draft.push(s),
       });
     } catch (e) {
       // The provider refused `tools` outright: switch to the text protocol once.
-      if (!textMode && !switchedMode && [400, 404, 422].includes(e.status)) {
-        textMode = true; switchedMode = true;
-        convo[0] = { role: 'system', content: systemPrompt({ today, context, maxRounds, textProtocol: true }) };
-        round--;
+      if (!st.textMode && !st.switched && [400, 404, 422].includes(e.status)) {
+        st.textMode = true; st.switched = true;
+        draft.discard();
         continue;
       }
       throw e;
@@ -302,48 +405,68 @@ export async function runAgent({
     let cleaned = content;
     if (Array.isArray(msg?.tool_calls) && msg.tool_calls.length) {
       native = true;
-      calls = msg.tool_calls.map((tc) => ({ id: tc.id, name: tc.function?.name, args: safeJSON(tc.function?.arguments) || {} }));
+      calls = msg.tool_calls.map((tc, i) => ({
+        id: tc.id || `call_${st.round}_${i}`,
+        name: tc.function?.name,
+        rawArgs: tc.function?.arguments || '{}',
+        args: safeJSON(tc.function?.arguments) || {},
+      }));
     } else {
       const parsed = parseTextToolCalls(content);
       calls = parsed.calls;
       cleaned = parsed.cleaned;
     }
-    // A plain answer — or the last round, where any further tool requests are
+
+    // A plain answer — or the last round, where further tool requests are
     // ignored and whatever prose the model wrote becomes the reply.
-    if (!calls.length || finalRound) {
-      return {
-        reply: cleaned || 'I could not put an answer together within the time limit — try a narrower question.',
-        trace, rounds: round + 1, mode: textMode ? 'text' : 'native', elapsedMs: elapsed(),
-      };
-    }
+    if (!calls.length || finalRound) { draft.flush(); return finish(cleaned); }
 
-    // Execute this round's calls in parallel.
-    const toRun = calls.slice(0, maxCallsPerRound);
-    const toolTimeout = Math.max(5_000, Math.min(20_000, budgetMs - elapsed() - 10_000));
-    const results = await Promise.all(toRun.map(async (c) => {
-      const t0 = Date.now();
-      const out = await runTool(tools, c.name, c.args, toolTimeout);
-      trace.push({ tool: c.name, arg: shortArgs(c.args), ok: !out?.error, ms: Date.now() - t0 });
-      return out;
-    }));
-
+    // Tool round: record the request, then run it (now, or next request).
+    draft.discard();
     if (native) {
-      convo.push({ role: 'assistant', content: msg.content ?? null, tool_calls: msg.tool_calls });
-      msg.tool_calls.forEach((tc, i) => {
-        const out = i < toRun.length ? results[i] : { error: 'skipped: too many tool calls in one turn — ask again if still needed' };
-        convo.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(out) });
+      st.work.push({
+        role: 'assistant', content: msg.content ?? null,
+        tool_calls: calls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: typeof c.rawArgs === 'string' ? c.rawArgs : JSON.stringify(c.rawArgs) } })),
       });
     } else {
-      convo.push({ role: 'assistant', content: content || '(calling tools)' });
-      convo.push({
-        role: 'user',
-        content: 'Tool results:\n' + toRun.map((c, i) =>
-          `<tool_result name="${c.name}">${JSON.stringify(results[i])}</tool_result>`).join('\n')
-          + '\nContinue: call more tools only if genuinely needed, otherwise write the final answer.',
-      });
+      st.work.push({ role: 'assistant', content: content || '(calling tools)' });
     }
+    st.pending = { native, calls: calls.map(({ id, name, args }) => ({ id, name, args })) };
   }
+  return pause();
+}
 
-  // Loop exhausted without a plain answer (defensive — the final round forbids tools).
-  return { reply: 'I ran out of steps before finishing — try a narrower question.', trace, rounds: maxRounds, mode: textMode ? 'text' : 'native', elapsedMs: elapsed() };
+// Runs steps back to back in one process — what the browser does across
+// requests. Used by tests and anything server-side that wants the whole answer.
+export async function runAgent({ messages, callLLM, tools, context, maxRounds = 5, maxCallsPerRound = 6, today, emit, stepOpts = {} }) {
+  let state = null;
+  for (let i = 0; i < 20; i++) {
+    const out = await runAgentStep({ messages, callLLM, tools, context, state, maxRounds, maxCallsPerRound, today, emit, ...stepOpts });
+    if (out.done) return out;
+    state = JSON.parse(JSON.stringify(out.state));   // exactly what a round trip through the browser does
+  }
+  return { reply: 'I ran out of steps before finishing — try a narrower question.', trace: state?.trace || [], rounds: state?.round || 0, mode: 'native', elapsedMs: 0 };
+}
+
+// Validates a state object that came back from the browser.
+export function sanitizeState(s) {
+  if (!s || typeof s !== 'object') return null;
+  const okMsg = (m) => m && ['assistant', 'tool', 'user'].includes(m.role)
+    && (m.content == null || typeof m.content === 'string')
+    && (m.tool_calls == null || Array.isArray(m.tool_calls))
+    && (m.role !== 'tool' || typeof m.tool_call_id === 'string');
+  if (!Array.isArray(s.work) || !s.work.every(okMsg) || s.work.length > 60) return null;
+  const now = Date.now();
+  const t0 = Number(s.t0);
+  return {
+    work: s.work,
+    round: Math.max(0, Math.min(20, s.round | 0)),
+    textMode: !!s.textMode, switched: !!s.switched, nudged: !!s.nudged,
+    trace: Array.isArray(s.trace) ? s.trace.slice(0, 60) : [],
+    t0: Number.isFinite(t0) && t0 <= now && now - t0 < 15 * 60_000 ? t0 : now,
+    pending: s.pending && Array.isArray(s.pending.calls)
+      ? { native: !!s.pending.native, calls: s.pending.calls.slice(0, 10).map((c) => ({ id: String(c.id || ''), name: String(c.name || ''), args: c.args && typeof c.args === 'object' ? c.args : {} })) }
+      : null,
+    steps: Math.max(0, Math.min(50, s.steps | 0)),
+  };
 }

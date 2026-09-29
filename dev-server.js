@@ -227,7 +227,7 @@ const mockAgent = () => ({
     { tool: 'get_valuation_stretch', arg: 'NVDA', ok: true, ms: 610 },
     { tool: 'get_quote', arg: 'TSM', ok: true, ms: 320 },
   ],
-  rounds: 2, mode: 'native', elapsedMs: 6400, provider: 'openai', model: 'gpt-5 (mock)',
+  rounds: 2, mode: 'native', elapsedMs: 6400, provider: 'openai', model: 'gpt-5.4-mini (mock)',
 });
 
 const server = http.createServer(async (req, res) => {
@@ -248,8 +248,32 @@ const server = http.createServer(async (req, res) => {
         if (url.pathname === '/api/fundamentals') return res.end(JSON.stringify(mockFundamentals(url.searchParams.get('symbol') || 'NVDA')));
         if (url.pathname === '/api/screener') return res.end(JSON.stringify(await mockScreener(url.searchParams.get('category'))));
         if (url.pathname === '/api/agent') {
-          for await (const _ of req) { /* drain */ }
-          return setTimeout(() => res.end(JSON.stringify(mockAgent())), 900);
+          // Mimics the real protocol: step 1 streams tool progress and returns
+          // `continue`; step 2 streams the answer text and returns `done`.
+          const chunks = []; for await (const c of req) chunks.push(c);
+          let body = {}; try { body = JSON.parse(Buffer.concat(chunks).toString() || '{}'); } catch {}
+          res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+          const emit = (o) => res.write(JSON.stringify(o) + '\n');
+          const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
+          const m = mockAgent();
+          const q = String((body.messages || []).slice(-1)[0]?.content || '');
+          if (/connection drop/i.test(q) && !body.state && !globalThis.__mockDropped) {
+            globalThis.__mockDropped = true;             // exercises the browser's one-retry path
+            emit({ t: 'status', text: 'Thinking…' }); await wait(400);
+            return res.end();
+          }
+          if (!body.state) {
+            emit({ t: 'status', text: 'Thinking…' }); await wait(500);
+            emit({ t: 'status', text: 'Fetching data…' });
+            for (const t of m.trace) emit({ t: 'tool', phase: 'start', tool: t.tool, arg: t.arg });
+            for (const t of m.trace) { await wait(350); emit({ t: 'tool', phase: 'end', ...t }); }
+            emit({ t: 'continue', state: { work: [], round: 1, trace: m.trace, t0: Date.now() - 2000, steps: 1 } });
+            return res.end();
+          }
+          emit({ t: 'status', text: 'Writing the answer…' }); await wait(300);
+          for (let i = 0; i < m.reply.length; i += 24) { emit({ t: 'delta', text: m.reply.slice(i, i + 24) }); await wait(25); }
+          emit({ t: 'done', ...m, steps: 2 });
+          return res.end();
         }
         if (url.pathname === '/api/forecast') {
           const chunks = []; for await (const c of req) chunks.push(c);

@@ -123,13 +123,51 @@ Banks skip FCF margin, debt/FCF and EV/EBITDA (meaningless for lenders) and
 use P/B. A payout ratio over 100% cuts the income factor by 40%. Missing
 metrics lower `coverage` rather than the score. Funds are skipped.
 
-### Assistant (`_agent.js`)
+### Assistant (`_agent.js` + `agent.js`)
 
-`runAgent({messages, callLLM, context})` loops up to 5 rounds inside a 52 s
-budget: call the model with `TOOL_DEFS` → run the requested tools in parallel
-(max 6 per round) → feed results back → repeat until the model answers without
-tools. The last round (or when <14 s remain) sends `tool_choice: 'none'` plus a
-"answer now" nudge so a reply always comes back. Three tool-call paths:
+The assistant loop: call the model with `TOOL_DEFS` → run the requested tools
+in parallel (max 6 per round) → feed results back → repeat until the model
+answers without tools (max 6 rounds; the last sends `tool_choice: 'none'` plus
+an "answer now" nudge so a reply always comes back).
+
+**It runs in steps, not in one request.** A question is 2–3 model calls plus
+tool fetches; on a slow model that exceeds one invocation, and in a single
+fixed budget the last call — the one writing the answer — got whatever time was
+left and timed out, losing all the research. `runAgentStep({messages, state,
+emit, …})` does as much as fits and returns either `{done, reply, trace}` or
+`{done:false, state}`:
+
+- a model call only *starts* in the first 12 s of a request (`llmStartByMs`),
+  so it always has ~40 s to finish;
+- tools only start in the first 30 s (`toolsStartByMs`); otherwise they're
+  parked in `state.pending` and run first thing in the next request;
+- after 170 s in total (`totalBudgetMs`, measured from `state.t0`) the next
+  model call is the final one.
+
+`state` = `{work, round, pending, trace, t0, textMode, …}` — `work` is this
+turn's assistant/tool messages. It round-trips through the browser, so
+`sanitizeState()` validates it (no system messages, sizes clamped, ≤400 KB).
+`runAgent()` chains steps in-process (tests use it).
+
+**Streaming.** `agent.js` responds with NDJSON events — `status`, `tool`
+(start/end), `delta`/`reset` (answer text), `ping` every 8 s, and finally
+`done`, `continue` (+ state) or `error`. Validation errors before streaming
+starts are ordinary JSON 4xx. Model calls use `stream: true`; `readStream()`
+stitches text and fragmented tool-call deltas together. `makeDraft()` forwards
+text as it arrives but never tool-call markup or `<think>` tags (a trailing `<`
+that could open one is held back); if a turn turns out to be a tool call it
+emits `reset`. If the model times out mid-answer, the partial answer is kept
+with a "cut off" note. A provider returning plain JSON instead of a stream is
+also accepted.
+
+**Models.** The assistant does not inherit the forecast's model:
+`OPENAI_AGENT_MODEL` (default `gpt-5.4-mini`, `reasoning_effort` from
+`OPENAI_AGENT_REASONING`, default `low`) and `NVIDIA_AGENT_MODEL` (default
+`nemotron-3-super-120b-a12b`, thinking off). Rejected optional parameters
+(reasoning, temperature, chat template, stream) are dropped and retried; 429/503
+are retried after 1.5 s.
+
+Three tool-call paths:
 
 1. **native** — `message.tool_calls` (OpenAI; Nemotron most of the time);
 2. **leaked** — Nemotron sometimes writes `<tool_call>{…}</tool_call>` or the
@@ -140,10 +178,10 @@ tools. The last round (or when <14 s remain) sends `tool_choice: 'none'` plus a
    back as `<tool_result>` user messages.
 
 Tools return compact JSON (errors as `{error}` so the model can say "no data"
-rather than invent it). `screen_category` shares the screener's caches, so a
-question right after the Top-picks card loads is fast. `callLLM` is injected,
-which is how the loop is unit-tested without a network. The reply includes a
-`trace` of `{tool, arg, ok, ms}` that the UI shows as "Data consulted".
+rather than invent it; each result capped at 12 KB). `screen_category` shares
+the screener's caches. `callLLM` is injected, which is how the loop is
+unit-tested without a network. The trace `{tool, arg, ok, ms}` is shown as
+"Data consulted".
 
 ## Frontend (`index.html`)
 
@@ -241,7 +279,13 @@ comment:
   creates a custom list named "<Category> — top picks"; "Ask AI about these"
   opens the assistant with a prefilled prompt.
 - `assistant` — `chat` state, `sendChat()` POSTs the history plus page context
-  (active list name + tickers, selected symbol) to `/api/agent`.
+  (active list name + tickers, selected symbol) to `/api/agent`, reads the
+  NDJSON stream in `postStep()`, and loops while the server answers
+  `continue` (up to 14 steps). A dropped connection, platform 504 or model
+  timeout is retried once from the same state. `chat.live` holds the in-flight
+  status, tool chips and streamed draft (`renderLive()`, repainted per
+  animation frame); the Send button becomes Stop (`AbortController`), and a
+  stopped answer keeps whatever text had arrived.
   `mdToHtml()` is a small **escape-first** markdown renderer (tables, lists,
   headings, code, bold/italic, http links only); backticked tickers become
   `.tk` buttons that load the chart. Enter sends, Shift+Enter is a newline,
@@ -275,7 +319,8 @@ state" throughout — no virtual DOM, no partial updates.
 | Top-picks categories / tickers | `UNIVERSES` in `api/_universes.js` (keep ids stable — `ls_tp_cat` stores them) |
 | Factor weights per sector type | `WEIGHTS` in `api/_screener.js` |
 | Which metrics make up a factor | `FACTORS` in `api/_screener.js` |
-| Assistant model | env `OPENAI_AGENT_MODEL` / `NVIDIA_AGENT_MODEL` |
+| Assistant model | env `OPENAI_AGENT_MODEL` / `NVIDIA_AGENT_MODEL` (defaults in `PROVIDERS`, `api/agent.js`) |
+| Assistant time budgets | `runAgentStep()` defaults in `api/_agent.js` — keep `stepBudgetMs` under `maxDuration` for `api/agent.js` in `vercel.json` |
 | Assistant tools | `TOOL_DEFS` + `TOOL_IMPLS` in `api/_agent.js` (add both; add a label in `TOOL_LABEL` in `index.html`) |
 | Assistant tone / rules | `systemPrompt()` in `api/_agent.js` |
 | Suggested questions | `SUGGESTIONS` in `index.html` |
@@ -306,6 +351,9 @@ state" throughout — no virtual DOM, no partial updates.
 - A cold Top-picks load for a 10-stock category makes ~20 Yahoo calls (4 at a
   time) and takes several seconds; after that it's cached per warm instance
   and at the edge for an hour. Don't add much beyond ~12 tickers per category.
+- `/api/agent` streams. Don't wrap it in anything that buffers the body, and
+  keep the event names in sync between `api/agent.js` and `postStep()` /
+  `onLiveEvent()` in `index.html`.
 - Every assistant question spends model credit (usually 2–3 calls). The
   assistant's tool implementations call the same helpers as the endpoints, so
   a Yahoo outage shows up there as tool errors, visible in "Data consulted".

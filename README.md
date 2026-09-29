@@ -130,9 +130,18 @@ Offline / UI-only mode with synthetic data: `MOCK=1 node dev-server.js`
 - **Assistant provider**: the assistant defaults to OpenAI when `OPENAI_API_KEY`
   is set, because it relies on tool calling and OpenAI's is the most reliable;
   NVIDIA works too (toggle under the chat box) and the server repairs Nemotron's
-  occasional malformed tool calls. `OPENAI_AGENT_MODEL` / `NVIDIA_AGENT_MODEL`
-  pick a different model for the assistant only (fall back to `OPENAI_MODEL` /
-  `NVIDIA_MODEL`). A question typically costs 2–3 model calls.
+  occasional malformed tool calls. The assistant has its own fast defaults —
+  `gpt-5.4-mini` and `nemotron-3-super-120b-a12b` — and does NOT use the
+  forecast's `OPENAI_MODEL` / `NVIDIA_MODEL`, because a research question is
+  2–3 model calls and a large reasoning model makes that too slow. Override with
+  `OPENAI_AGENT_MODEL` / `NVIDIA_AGENT_MODEL`; `OPENAI_AGENT_REASONING` sets its
+  reasoning effort (default `low`).
+- **Long questions don't time out**: the assistant works in steps. Each request
+  to `/api/agent` streams progress (lookups, then the answer as it's written)
+  and, if the work isn't finished, hands back a state object that the page
+  posts straight back — so every model call gets a fresh serverless time window
+  instead of sharing one 60-second budget. The Send button becomes Stop while
+  it works.
 - **Top picks** are a screen of reported numbers ranked within each group — the
   best of a weak group is still in a weak group, and the screen doesn't know
   your goals, horizon or tax position. Edit `api/_universes.js` to change the

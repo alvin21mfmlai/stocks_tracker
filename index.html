@@ -415,6 +415,11 @@
     background: var(--series-1); color: #fff; font-size: 13px;
   }
   .ai-input button:disabled { opacity: .5; cursor: default; }
+  .ai-input button.stop { background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border); }
+  .ai-trace .chip.run { border-style: dashed; animation: ai-pulse 1.2s ease-in-out infinite; }
+  @keyframes ai-pulse { 50% { opacity: .45; } }
+  @media (prefers-reduced-motion: reduce) { .ai-trace .chip.run { animation: none; } }
+  #aiLive { display: flex; flex-direction: column; gap: 8px; }
   .ai-meta { display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; font-size: 11px; color: var(--text-muted); }
   .ai-meta .fc-horizons { margin: 0; }
   .ai-meta .fc-horizons button { font-size: 11px; padding: 2px 8px; }
@@ -2021,44 +2026,147 @@
       ? `<div class="ai-msg user">${esc(m.content)}</div>`
       : m.error ? `<div class="ai-err">${esc(m.content)}</div>`
       : `<div class="ai-msg bot">${mdToHtml(m.content)}${traceHtml(m)}</div>`).join('')
-      + (chat.busy ? '<div class="ai-wait"><span class="ai-dots"><span></span><span></span><span></span></span><span id="aiElapsed">Researching…</span></div>' : '');
+      + (chat.busy ? '<div id="aiLive"></div>' : '');
+    if (chat.busy) renderLive();
     log.scrollTop = log.scrollHeight;
+  }
+
+  // The server answers in steps (see api/_agent.js): each POST streams progress
+  // events as NDJSON and ends with `done`, `error` or `continue` + a state
+  // object, which is posted straight back so the next step gets a fresh
+  // serverless time window.
+  async function postStep(payload, signal, onEvent) {
+    const r = await fetch('/api/agent', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal,
+    });
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('ndjson') || !r.body) {
+      const raw = await r.text();
+      let j = null; try { j = JSON.parse(raw); } catch {}
+      const err = new Error(j && j.error ? j.error : r.status === 504 ? 'timeout' : `Server error (${r.status}) — try again.`);
+      err.retryable = !j && r.status >= 500;     // an HTML error page = the platform, not our code
+      err.timeout = r.status === 504;
+      throw err;
+    }
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '', final = null;
+    const line = (l) => {
+      l = l.trim(); if (!l) return;
+      let ev; try { ev = JSON.parse(l); } catch { return; }
+      if (ev.t === 'done' || ev.t === 'continue' || ev.t === 'error') final = ev; else onEvent(ev);
+    };
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) { line(buf.slice(0, nl)); buf = buf.slice(nl + 1); }
+    }
+    line(buf);
+    if (!final) {
+      const err = new Error('The connection closed before the assistant finished.');
+      err.retryable = true; err.timeout = true;
+      throw err;
+    }
+    return final;
+  }
+
+  let liveFrame = 0;
+  function renderLive() {
+    liveFrame = 0;
+    const el = $('aiLive'), L = chat.live;
+    if (!el || !L) return;
+    const log = $('aiLog');
+    const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+    const secs = Math.round((Date.now() - L.t0) / 1000);
+    const chips = L.tools.map((t) => `<span class="chip${t.pending ? ' run' : t.ok ? '' : ' bad'}">${esc(TOOL_LABEL[t.tool] || t.tool)}${t.arg ? ' ' + esc(t.arg) : ''}</span>`).join('');
+    el.innerHTML = (L.draft ? `<div class="ai-msg bot">${mdToHtml(L.draft)}</div>` : '')
+      + (chips ? `<div class="ai-trace"><div class="chips">${chips}</div></div>` : '')
+      + `<div class="ai-wait"><span class="ai-dots"><span></span><span></span><span></span></span><span>${esc(L.status)} ${secs}s</span></div>`;
+    if (nearBottom) log.scrollTop = log.scrollHeight;
+  }
+  const paintLive = () => { if (!liveFrame) liveFrame = requestAnimationFrame(renderLive); };
+
+  function onLiveEvent(ev) {
+    const L = chat.live; if (!L) return;
+    if (ev.t === 'status') L.status = ev.text;
+    else if (ev.t === 'delta') L.draft += ev.text;
+    else if (ev.t === 'reset') L.draft = '';
+    else if (ev.t === 'tool' && ev.phase === 'start') L.tools.push({ tool: ev.tool, arg: ev.arg, pending: true });
+    else if (ev.t === 'tool' && ev.phase === 'end') {
+      const t = L.tools.find((x) => x.pending && x.tool === ev.tool && x.arg === ev.arg);
+      if (t) { t.pending = false; t.ok = ev.ok; }
+    }
+    if (ev.t !== 'ping') paintLive();
+  }
+
+  function setSendMode(busy) {
+    const b = $('aiSend');
+    b.textContent = busy ? 'Stop' : 'Send';
+    b.classList.toggle('stop', busy);
   }
 
   async function sendChat(text) {
     text = String(text || '').trim();
     if (!text || chat.busy) return;
     chat.msgs.push({ role: 'user', content: text });
-    chat.busy = true; $('aiSend').disabled = true; $('aiText').value = ''; autoGrow();
+    chat.busy = true; $('aiText').value = ''; autoGrow();
+    chat.live = { status: 'Thinking…', tools: [], draft: '', t0: Date.now() };
+    chat.ctrl = new AbortController();
+    setSendMode(true);
     saveChat(); renderChat();
-    const t0 = Date.now();
-    const tick = setInterval(() => {
-      const el = $('aiElapsed');
-      if (el) el.textContent = `Researching… ${Math.round((Date.now() - t0) / 1000)}s`;
-    }, 1000);
+    const tick = setInterval(paintLive, 1000);
+    const provider = chat.provider;
+    const base = {
+      provider,
+      messages: chat.msgs.filter((m) => !m.error).map(({ role, content }) => ({ role, content })),
+      context: { listName: listName(activeList), tickers: listTickers(activeList), selected },
+    };
+    let state = null, retries = 0;
     try {
-      const r = await fetch('/api/agent', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: chat.provider,
-          messages: chat.msgs.filter((m) => !m.error).map(({ role, content }) => ({ role, content })),
-          context: { listName: listName(activeList), tickers: listTickers(activeList), selected },
-        }),
-      });
-      const raw = await r.text();
-      let j;
-      try { j = JSON.parse(raw); }
-      catch { throw new Error(r.status === 504 ? 'The assistant ran out of time — try a narrower question.' : `Server error (${r.status}) — try again.`); }
-      if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
-      chat.msgs.push({
-        role: 'assistant', content: j.reply || '', trace: j.trace || [],
-        meta: `${String(j.model || '').split('/').pop()} · ${Math.round((j.elapsedMs || 0) / 1000)}s`,
-      });
+      for (let step = 0; step < 14; step++) {
+        let fin;
+        try {
+          fin = await postStep({ ...base, state }, chat.ctrl.signal, onLiveEvent);
+        } catch (e) {
+          if (e.name === 'AbortError' || !e.retryable || retries >= 1) throw e;
+          retries++;
+          chat.live.status = 'Slow response — retrying…'; chat.live.draft = ''; paintLive();
+          continue;                                   // same state: repeat that step
+        }
+        if (fin.t === 'continue') { state = fin.state; continue; }
+        if (fin.t === 'error') {
+          if (fin.status === 504 && retries < 1) {
+            retries++; chat.live.status = 'The model was slow — retrying…'; chat.live.draft = ''; paintLive();
+            continue;
+          }
+          const err = new Error(fin.error); err.timeout = fin.status === 504; throw err;
+        }
+        chat.msgs.push({
+          role: 'assistant', content: fin.reply || '', trace: fin.trace || [],
+          meta: `${String(fin.model || '').split('/').pop()} · ${Math.round((fin.elapsedMs || 0) / 1000)}s`,
+        });
+        return;
+      }
+      throw new Error('The assistant needed too many steps — try a narrower question.');
     } catch (e) {
-      chat.msgs.push({ role: 'assistant', content: e.message, error: true });
+      const other = provider === 'openai' ? 'NVIDIA' : 'OpenAI';
+      if (e.name === 'AbortError') {
+        const d = chat.live && chat.live.draft;
+        chat.msgs.push(d ? { role: 'assistant', content: d + '\n\n_(stopped)_' } : { role: 'assistant', content: 'Stopped.', error: true });
+      } else if (e.timeout || e.message === 'timeout') {
+        chat.msgs.push({ role: 'assistant', error: true,
+          content: `The ${provider === 'openai' ? 'OpenAI' : 'NVIDIA'} model didn't answer in time, even after a retry. Try again, switch to ${other} below, or ask about fewer stocks at once.` });
+      } else if (e instanceof TypeError) {
+        chat.msgs.push({ role: 'assistant', content: 'Network error — check your connection and try again.', error: true });
+      } else {
+        chat.msgs.push({ role: 'assistant', content: e.message, error: true });
+      }
     } finally {
       clearInterval(tick);
-      chat.busy = false; $('aiSend').disabled = false;
+      chat.busy = false; chat.live = null; chat.ctrl = null;
+      setSendMode(false);
       saveChat(); renderChat();
     }
   }
@@ -2083,7 +2191,11 @@
   $('aiFab').addEventListener('click', () => openChat());
   $('aiClose').addEventListener('click', closeChat);
   $('aiClear').addEventListener('click', () => { if (chat.busy) return; chat.msgs = []; saveChat(); renderChat(); $('aiText').focus(); });
-  $('aiForm').addEventListener('submit', (e) => { e.preventDefault(); sendChat($('aiText').value); });
+  $('aiForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (chat.busy) { if (chat.ctrl) chat.ctrl.abort(); return; }   // the button is "Stop" while busy
+    sendChat($('aiText').value);
+  });
   $('aiText').addEventListener('input', autoGrow);
   $('aiText').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendChat($('aiText').value); }
